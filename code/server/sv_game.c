@@ -25,6 +25,10 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "../botlib/botlib.h"
 
+#ifdef USE_NATIVE_HACK
+#include "../vrmod/VRMOD_input.h"
+#endif
+
 botlib_export_t	*botlib_export;
 
 // these functions must be used instead of pointer arithmetic, because
@@ -1022,9 +1026,22 @@ static void SV_InitGameVM( qboolean restart ) {
 		svs.clients[i].gentity = NULL;
 	}
 	
+#ifdef USE_NATIVE_HACK
+	//GUNNM TODO : change right_handed to qfalse if left controller is triggered in the menu
+	vr_info.right_handed = qtrue;
+
+	//Ensure the game library has our VR client info
+	//this only works with native VM
+	long val = (long)(&vr_info);
+	unsigned int ptr[sizeof(long) / sizeof(unsigned int)];
+	memcpy(ptr, &val, sizeof(long));
+
 	// use the current msec count for a random seed
 	// init for this gamestate
+	VM_Call( gvm, 5, GAME_INIT, sv.time, Com_Milliseconds(), restart, ptr[0], ptr[1] );
+#else
 	VM_Call( gvm, 3, GAME_INIT, sv.time, Com_Milliseconds(), restart );
+#endif
 }
 
 

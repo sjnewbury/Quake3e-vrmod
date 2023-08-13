@@ -165,6 +165,22 @@ typedef enum {
 	// 1.32
 	CG_FS_SEEK,
 
+#ifdef USE_VR_QVM
+	CG_KEEP_RIGHT_POS 		= 90,
+	CG_KEEP_RIGHT_ANGLES 	= 91,
+	CG_KEEP_LEFT_POS 		= 92,
+	CG_KEEP_LEFT_ANGLES 	= 93,
+#endif
+
+#ifdef USE_NEOHUD
+	CG_R_RENDERHUD 			= 94,
+	CG_FS_GETFILELIST 		= 95,
+#endif
+
+#ifdef USE_HAPTIC
+		CG_HAPTICEVENT 		= 96,
+#endif
+
 /*
 	CG_LOADCAMERA,
 	CG_STARTCAMERA,

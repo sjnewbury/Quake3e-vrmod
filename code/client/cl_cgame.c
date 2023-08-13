@@ -25,6 +25,10 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "../botlib/botlib.h"
 
+#ifdef USE_VR
+#include "../vrmod/VRMOD_input.h"
+#endif
+
 extern	botlib_export_t	*botlib_export;
 
 static int nestedCmdOffset; // nested command buffer offset
@@ -747,6 +751,42 @@ static intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 		re.RemapShader( VMA(1), VMA(2), VMA(3) );
 		return 0;
 
+	// VR syscall
+#ifdef USE_VR_QVM
+	case CG_KEEP_RIGHT_POS:
+		VRMOD_CL_KeepRightPos(args[1], args[2], args[3]);
+		return 0;
+
+	case CG_KEEP_RIGHT_ANGLES:
+		VRMOD_CL_KeepRightAngles(VMA(1));
+		return 0;
+
+	case CG_KEEP_LEFT_POS:
+		//VRMOD_CL_KeepLeftMuzzlePoint(args[1], args[2], args[3]);
+		return 0;
+
+	case CG_KEEP_LEFT_ANGLES:
+		VRMOD_CL_KeepLeftAngles(VMA(1));
+		return 0;
+#endif
+
+#ifdef USE_NEOHUD
+	case CG_R_RENDERHUD:
+		re.RenderHUD( );
+		return 0;
+
+	// HUD parsing
+	case CG_FS_GETFILELIST:
+		VM_CHECKBOUNDS(cgvm, args[3], args[4]);
+		return FS_GetFileList(VMA(1), VMA(2), VMA(3), args[4]);
+#endif
+
+#ifdef USE_HAPTIC
+	case CG_HAPTICEVENT:
+		//TODO
+		return 0;
+#endif
+
 /*
 	case CG_LOADCAMERA:
 		return loadCamera(VMA(1));
@@ -862,7 +902,16 @@ void CL_InitCGame( void ) {
 	// init for this gamestate
 	// use the lastExecutedServerCommand instead of the serverCommandSequence
 	// otherwise server commands sent just before a gamestate are dropped
+#ifdef USE_NATIVE_HACK
+	//Pass the vr client info in on the init
+	long val = (long)(&vr_info);
+	unsigned int ptr[sizeof(long) / sizeof(unsigned int)];
+	memcpy(ptr, &val, sizeof(long));
+
+	VM_Call( cgvm, 5, CG_INIT, clc.serverMessageSequence, clc.lastExecutedServerCommand, clc.clientNum, ptr[0], ptr[1] );
+#else
 	VM_Call( cgvm, 3, CG_INIT, clc.serverMessageSequence, clc.lastExecutedServerCommand, clc.clientNum );
+#endif
 
 	// reset any CVAR_CHEAT cvars registered by cgame
 	if ( !clc.demoplaying && !cl_connectedToCheatServer )

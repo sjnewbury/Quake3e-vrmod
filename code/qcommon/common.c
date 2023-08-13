@@ -34,6 +34,10 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "../client/keys.h"
 
+#ifdef USE_VR
+#include "../vrmod/VRMOD_input.h"
+#endif
+
 const int demo_protocols[] = { 66, 67, OLD_PROTOCOL_VERSION, NEW_PROTOCOL_VERSION, 0 };
 
 #define USE_MULTI_SEGMENT // allocate additional zone segments on demand
@@ -2867,7 +2871,11 @@ int Com_EventLoop( void ) {
 			CL_CharEvent( ev.evValue );
 			break;
 		case SE_MOUSE:
+#ifdef USE_VIRTUAL_MENU
+			VRMOD_CL_MouseEvent( ev.evValue, ev.evValue2, (int) ev.evPtr );
+#else
 			CL_MouseEvent( ev.evValue, ev.evValue2 /*, ev.evTime*/ );
+#endif
 			break;
 		case SE_JOYSTICK_AXIS:
 			CL_JoystickEvent( ev.evValue, ev.evValue2, ev.evTime );
@@ -3984,6 +3992,9 @@ void Com_Init( char *commandLine ) {
 #ifndef DEDICATED
 	if ( !com_dedicated->integer ) {
 		CL_Init();
+#ifdef USE_VR
+	        VRMOD_CL_VRInit();
+#endif
 		// Sys_ShowConsole( com_viewlog->integer, qfalse ); // moved down
 	}
 #endif

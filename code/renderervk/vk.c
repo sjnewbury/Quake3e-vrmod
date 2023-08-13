@@ -8,14 +8,26 @@
 #endif
 #endif
 
+#ifdef USE_VR
+#include "../vrmod/VRMOD_input.h"
+#endif
+
+#ifdef USE_OPENXR
+#include "../vrmod/OpenXR/OPENXR_imp.h"
+#include "../vrmod/OpenXR/OPENXR_qinput.h" // GUNNM delete if not used
+#endif
+
 static int vkSamples = VK_SAMPLE_COUNT_1_BIT;
 static int vkMaxSamples = VK_SAMPLE_COUNT_1_BIT;
 
 //
 // Vulkan API functions used by the renderer.
 //
+static PFN_vkGetInstanceProcAddr						qvkGetInstanceProcAddr;
+
 static PFN_vkCreateInstance								qvkCreateInstance;
 static PFN_vkEnumerateInstanceExtensionProperties		qvkEnumerateInstanceExtensionProperties;
+static PFN_vkEnumerateInstanceLayerProperties			qvkEnumerateInstanceLayerProperties;
 
 static PFN_vkCreateDevice								qvkCreateDevice;
 static PFN_vkDestroyInstance							qvkDestroyInstance;
@@ -27,7 +39,9 @@ static PFN_vkGetPhysicalDeviceFormatProperties			qvkGetPhysicalDeviceFormatPrope
 static PFN_vkGetPhysicalDeviceMemoryProperties			qvkGetPhysicalDeviceMemoryProperties;
 static PFN_vkGetPhysicalDeviceProperties				qvkGetPhysicalDeviceProperties;
 static PFN_vkGetPhysicalDeviceQueueFamilyProperties		qvkGetPhysicalDeviceQueueFamilyProperties;
+#ifndef USE_OPENXR
 static PFN_vkDestroySurfaceKHR							qvkDestroySurfaceKHR;
+#endif
 static PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR	qvkGetPhysicalDeviceSurfaceCapabilitiesKHR;
 static PFN_vkGetPhysicalDeviceSurfaceFormatsKHR			qvkGetPhysicalDeviceSurfaceFormatsKHR;
 static PFN_vkGetPhysicalDeviceSurfacePresentModesKHR	qvkGetPhysicalDeviceSurfacePresentModesKHR;
@@ -385,6 +399,24 @@ static void vk_set_object_name( uint64_t obj, const char *objName, VkDebugReport
 }
 
 
+VkImage getSwapchainImage(int eye, uint32_t idx)
+{
+#ifdef USE_OPENXR
+	return xr.images[eye][idx].image;
+#endif
+
+	return vk.swapchain_images[idx];
+}
+
+VkImage getSwapchainColor_image(int eye, uint32_t idx)
+{
+#ifdef USE_OPENXR
+	return xr.images[eye][idx].image;
+#endif
+
+	return vk.color_image;
+}
+
 static void vk_create_swapchain( VkPhysicalDevice physical_device, VkDevice device, VkSurfaceKHR surface, VkSurfaceFormatKHR surface_format, VkSwapchainKHR *swapchain ) {
 	VkImageViewCreateInfo view;
 	VkSurfaceCapabilitiesKHR surface_caps;
@@ -405,6 +437,10 @@ static void vk_create_swapchain( VkPhysicalDevice physical_device, VkDevice devi
 	//swapchain = &vk.swapchain;
 
 	VK_CHECK( qvkGetPhysicalDeviceSurfaceCapabilitiesKHR( physical_device, surface, &surface_caps ) );
+
+#ifdef USE_OPENXR
+	OpenXR_SwapChainInit();
+#endif
 
 	image_extent = surface_caps.currentExtent;
 	if ( image_extent.width == 0xffffffff && image_extent.height == 0xffffffff ) {
@@ -514,41 +550,43 @@ static void vk_create_swapchain( VkPhysicalDevice physical_device, VkDevice devi
 	vk.swapchain_image_count = MIN( vk.swapchain_image_count, MAX_SWAPCHAIN_IMAGES );
 	VK_CHECK( qvkGetSwapchainImagesKHR( vk.device, vk.swapchain, &vk.swapchain_image_count, vk.swapchain_images ) );
 
-	for ( i = 0; i < vk.swapchain_image_count; i++ ) {
-
-		view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-		view.pNext = NULL;
-		view.flags = 0;
-		view.image = vk.swapchain_images[i];
-		view.viewType = VK_IMAGE_VIEW_TYPE_2D;
-		view.format = vk.present_format.format;
-		view.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-		view.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-		view.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-		view.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-		view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		view.subresourceRange.baseMipLevel = 0;
-		view.subresourceRange.levelCount = 1;
-		view.subresourceRange.baseArrayLayer = 0;
-		view.subresourceRange.layerCount = 1;
-
-		VK_CHECK( qvkCreateImageView( vk.device, &view, NULL, &vk.swapchain_image_views[i] ) );
-
-		SET_OBJECT_NAME( vk.swapchain_images[i], va( "swapchain image %i", i ), VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT );
-		SET_OBJECT_NAME( vk.swapchain_image_views[i], va( "swapchain image %i", i ), VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_VIEW_EXT );
-	}
-
-	if ( vk.initSwapchainLayout != VK_IMAGE_LAYOUT_UNDEFINED ) {
-		VkCommandBuffer command_buffer = begin_command_buffer();
-
+	for (int eye = 0; eye < vk.NumEyes; eye++) {
 		for ( i = 0; i < vk.swapchain_image_count; i++ ) {
-			record_image_layout_transition( command_buffer, vk.swapchain_images[i],
+
+			view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+			view.pNext = NULL;
+			view.flags = 0;
+			view.image = getSwapchainImage(eye, i);
+			view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+			view.format = vk.present_format.format;
+			view.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+			view.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+			view.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+			view.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+			view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			view.subresourceRange.baseMipLevel = 0;
+			view.subresourceRange.levelCount = 1;
+			view.subresourceRange.baseArrayLayer = 0;
+			view.subresourceRange.layerCount = 1;
+
+			VK_CHECK( qvkCreateImageView( vk.device, &view, NULL, &vk.swapchain_image_views[eye][i] ) );
+
+			SET_OBJECT_NAME( getSwapchainImage(eye, i), va( "swapchain image %i", i ), VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT );
+			SET_OBJECT_NAME( vk.swapchain_image_views[eye][i], va( "swapchain image %i", i ), VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_VIEW_EXT );
+		}
+
+		if ( vk.initSwapchainLayout != VK_IMAGE_LAYOUT_UNDEFINED ) {
+			VkCommandBuffer command_buffer = begin_command_buffer();
+
+			for ( i = 0; i < vk.swapchain_image_count; i++ ) {
+				record_image_layout_transition( command_buffer, getSwapchainImage(eye, i),
 				VK_IMAGE_ASPECT_COLOR_BIT,
 				0, VK_IMAGE_LAYOUT_UNDEFINED,
 				VK_ACCESS_MEMORY_READ_BIT, vk.initSwapchainLayout );
-		}
+			}
 
-		end_command_buffer( command_buffer );
+			end_command_buffer( command_buffer );
+		}
 	}
 }
 
@@ -568,8 +606,22 @@ static void vk_create_render_passes( void )
 
 	depth_format = vk.depth_format;
 	device = vk.device;
+#ifdef USE_MULTIVIEW
+	VkRenderPassMultiviewCreateInfo multiviewCreateInfo;
+	const uint32_t viewMask = 0b00000011;
+	if ( isMultiview )
+	{
+		multiviewCreateInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_MULTIVIEW_CREATE_INFO;
+		multiviewCreateInfo.pNext = NULL;
+		multiviewCreateInfo.subpassCount = 1;
+		multiviewCreateInfo.pViewMasks = &viewMask;
+		multiviewCreateInfo.dependencyCount = 0;
+		multiviewCreateInfo.correlationMaskCount = 1;
+		multiviewCreateInfo.pCorrelationMasks = &viewMask;
+	}
+#endif
 
-	if ( r_fbo->integer == 0 )
+	if ( r_fbo->integer == 0 && !vk.msaaActive )
 	{
 		// presentation
 		attachments[0].flags = 0;
@@ -584,7 +636,11 @@ static void vk_create_render_passes( void )
 		attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 		attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 		attachments[0].initialLayout = vk.initSwapchainLayout;
+#ifdef USE_OPENXR
+		attachments[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+#else
 		attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+#endif
 	}
 	else
 	{
@@ -639,7 +695,11 @@ static void vk_create_render_passes( void )
 
 	Com_Memset( &desc, 0, sizeof( desc ) );
 	desc.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+#ifdef USE_MULTIVIEW
+	desc.pNext = isMultiview ? &multiviewCreateInfo : NULL;
+#else
 	desc.pNext = NULL;
+#endif
 	desc.flags = 0;
 	desc.pAttachments = attachments;
 	desc.pSubpasses = &subpass;
@@ -695,9 +755,41 @@ static void vk_create_render_passes( void )
 		deps[ 0 ].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT; // What access scopes are waiting on the dependency
 		deps[ 0 ].dependencyFlags = 0;
 
+		if ( vkSamples > VK_SAMPLE_COUNT_1_BIT ) {
+			attachments[2].flags = 0;
+			attachments[2].format = vk.color_format;
+			attachments[2].samples = vkSamples;
+#ifdef USE_BUFFER_CLEAR
+			attachments[2].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+#else
+			attachments[2].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+#endif
+			attachments[2].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+			attachments[2].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+			attachments[2].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+			attachments[2].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+			attachments[2].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+			desc.attachmentCount = 3;
+
+			colorRef0.attachment = 2; // msaa image attachment
+			colorRef0.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+			colorResolveRef.attachment = 0; // resolve image attachment
+			colorResolveRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+			subpass.pResolveAttachments = &colorResolveRef;
+		}
+
 		VK_CHECK( qvkCreateRenderPass( device, &desc, NULL, &vk.render_pass.main ) );
 		SET_OBJECT_NAME( vk.render_pass.main, "render pass - main", VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT );
 
+#ifdef USE_VIRTUAL_MENU
+		if ( vk.virtual_menu.enable ) {
+			VK_CHECK( qvkCreateRenderPass( device, &desc, NULL, &vk.render_pass.menu ) );
+			SET_OBJECT_NAME( vk.render_pass.menu, "render pass - menu", VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT );
+		}
+#endif
 		return;
 	}
 
@@ -722,6 +814,13 @@ static void vk_create_render_passes( void )
 
 	VK_CHECK( qvkCreateRenderPass( device, &desc, NULL, &vk.render_pass.main ) );
 	SET_OBJECT_NAME( vk.render_pass.main, "render pass - main", VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT );
+
+#ifdef USE_VIRTUAL_MENU
+	if (vk.virtual_menu.enable) {
+		VK_CHECK(qvkCreateRenderPass(device, &desc, NULL, &vk.render_pass.menu));
+		SET_OBJECT_NAME(vk.render_pass.menu, "render pass - menu", VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT);
+	}
+#endif
 
 	if ( r_bloom->integer ) {
 
@@ -825,14 +924,19 @@ static void vk_create_render_passes( void )
 	attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 	attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 	attachments[0].initialLayout = vk.initSwapchainLayout;
+#ifdef USE_OPENXR
+	attachments[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+#else
 	attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+#endif
 
 	VK_CHECK( qvkCreateRenderPass( device, &desc, NULL, &vk.render_pass.gamma ) );
-
 	SET_OBJECT_NAME( vk.render_pass.gamma, "render pass - gamma", VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT );
 
 	// screenmap
 
+#ifdef USE_SCREENMAP
+	vk.screenMap.enable = qtrue;
 	// resolve/color buffer
 	attachments[0].flags = 0;
 	attachments[0].format = vk.color_format;
@@ -915,6 +1019,7 @@ static void vk_create_render_passes( void )
 	VK_CHECK( qvkCreateRenderPass( device, &desc, NULL, &vk.render_pass.screenmap ) );
 
 	SET_OBJECT_NAME( vk.render_pass.screenmap, "render pass - screenmap", VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT );
+#endif // USE_SCREENMAP
 }
 
 
@@ -1085,6 +1190,11 @@ static void create_instance( void )
 	VkApplicationInfo appInfo;
 
 	flags = 0;
+#ifdef USE_OPENXR
+	if (!OpenXR_init_pre_vk()) {
+		ri.Error(ERR_FATAL, "OpenXR: instance creation failed");
+	}
+#endif
 	count = 0;
 	extension_count = 0;
 	VK_CHECK(qvkEnumerateInstanceExtensionProperties(NULL, &count, NULL));
@@ -1118,12 +1228,19 @@ static void create_instance( void )
 
 		ri.Printf(PRINT_DEVELOPER, "instance extension: %s\n", ext);
 	}
+#ifdef USE_OPENXR
+	OpenXR_getExtensions( extension_names, &extension_count);
+#endif
 
 	appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
 	appInfo.pNext = NULL;
 	appInfo.pApplicationName = NULL; // Q3_VERSION;
 	appInfo.applicationVersion = 0x0;
-	appInfo.pEngineName = NULL;
+#ifdef USE_OPENXR
+	appInfo.pEngineName = "Q3e Vulkan OpenXR";
+#else
+	appInfo.pEngineName = "Q3e Vulkan";
+#endif
 	appInfo.engineVersion = 0x0;
 	appInfo.apiVersion = VK_API_VERSION_1_0;
 
@@ -1138,15 +1255,22 @@ static void create_instance( void )
 #ifdef USE_VK_VALIDATION
 	desc.enabledLayerCount = 1;
 	desc.ppEnabledLayerNames = &validation_layer_name;
-
-	res = qvkCreateInstance( &desc, NULL, &vk.instance );
-
+#ifndef USE_OPENXR
+	res = qvkCreateInstance(&desc, NULL, &vk.instance);
+#else
+	xr.pfnGetInstanceProcAddr = qvkGetInstanceProcAddr;
+	res = OpenXR_create_VK_instance(desc);
+#endif
 	if ( res == VK_ERROR_LAYER_NOT_PRESENT ) {
 
 		desc.enabledLayerCount = 1;
 		desc.ppEnabledLayerNames = &validation_layer_name2;
-
+#ifndef USE_OPENXR
 		res = qvkCreateInstance( &desc, NULL, &vk.instance );
+#else
+		xr.pfnGetInstanceProcAddr = qvkGetInstanceProcAddr;
+		res = OpenXR_create_VK_instance(desc);
+ #endif
 
 		if ( res == VK_ERROR_LAYER_NOT_PRESENT ) {
 
@@ -1156,14 +1280,23 @@ static void create_instance( void )
 			desc.enabledLayerCount = 0;
 			desc.ppEnabledLayerNames = NULL;
 
-			res = qvkCreateInstance( &desc, NULL, &vk.instance );
+#ifndef USE_OPENXR
+			res = qvkCreateInstance(&desc, NULL, &vk.instance);
+#else
+			xr.pfnGetInstanceProcAddr = qvkGetInstanceProcAddr;
+			res = OpenXR_create_VK_instance(desc);
+#endif
 		}
 	}
 #else
 	desc.enabledLayerCount = 0;
 	desc.ppEnabledLayerNames = NULL;
-
+#ifndef USE_OPENXR
 	res = qvkCreateInstance( &desc, NULL, &vk.instance );
+#else
+	xr.pfnGetInstanceProcAddr = qvkGetInstanceProcAddr;
+	res = OpenXR_create_VK_instance(desc);
+#endif
 #endif
 
 	ri.Free( (void*)extension_names );
@@ -1379,13 +1512,21 @@ static const char *renderer_name( const VkPhysicalDeviceProperties *props ) {
 
 
 static qboolean vk_create_device( VkPhysicalDevice physical_device, int device_index ) {
+	qboolean presentationQueueFound = qfalse;
+	qboolean syncQueueFound = qfalse;
 
 	ri.Printf( PRINT_ALL, "...selected physical device: %i\n", device_index );
 
 	// select surface format
+/*#ifdef USE_OPENXR
+	OpenXR_selectFormat(24);
+#endif*/
+
+//#if !defined (USE_OPENXR)
 	if ( !vk_select_surface_format( physical_device, vk.surface ) ) {
 		return qfalse;
 	}
+//#endif
 
 	setup_surface_formats( physical_device );
 
@@ -1401,15 +1542,31 @@ static qboolean vk_create_device( VkPhysicalDevice physical_device, int device_i
 
 		// select queue family with presentation and graphics support
 		vk.queue_family_index = ~0U;
+		vk.queue_index = ~0U;
 		for (i = 0; i < queue_family_count; i++) {
-			VkBool32 presentation_supported;
-			VK_CHECK( qvkGetPhysicalDeviceSurfaceSupportKHR( physical_device, i, vk.surface, &presentation_supported ) );
+			if ( !presentationQueueFound ) {
+				VkBool32 presentation_supported;
+				VK_CHECK(qvkGetPhysicalDeviceSurfaceSupportKHR(physical_device, i, vk.surface, &presentation_supported));
+				if (presentation_supported && (queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0) {
+					vk.queue_family_index = i;
+					presentationQueueFound = qtrue;
+					//break;
+				}
+			}
+			else if ( !syncQueueFound ) {
+				if ((queue_families[i].queueFlags & VK_QUEUE_TRANSFER_BIT) != 0) {
+					vk.queue_index = i;
+					syncQueueFound = qtrue;
+				}
+			}
 
-			if (presentation_supported && (queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0) {
-				vk.queue_family_index = i;
+			if ( presentationQueueFound & syncQueueFound ) {
 				break;
 			}
 		}
+		// get a sync queue_index for OpenXR
+		if (presentationQueueFound & !syncQueueFound)
+			vk.queue_index = vk.queue_family_index;
 
 		ri.Free( queue_families );
 
@@ -1422,11 +1579,11 @@ static qboolean vk_create_device( VkPhysicalDevice physical_device, int device_i
 
 	// create VkDevice
 	{
-		const char *device_extension_list[4];
+		const char *device_extension_list[7];
 		uint32_t device_extension_count;
 		const char *ext, *end;
 		char *str;
-		const float priority = 1.0;
+		const float priority = 1.0f;
 		VkExtensionProperties *extension_properties;
 		VkDeviceQueueCreateInfo queue_desc;
 		VkPhysicalDeviceFeatures device_features;
@@ -1437,6 +1594,10 @@ static qboolean vk_create_device( VkPhysicalDevice physical_device, int device_i
 		qboolean dedicatedAllocation = qfalse;
 		qboolean memoryRequirements2 = qfalse;
 		qboolean debugMarker = qfalse;
+		qboolean supportsFragmentDensity = qfalse;
+#ifdef USE_MULTIVIEW
+		qboolean supportsMultiview = qfalse;
+#endif
 		uint32_t i, len, count = 0;
 
 		VK_CHECK( qvkEnumerateDeviceExtensionProperties( physical_device, NULL, &count, NULL ) );
@@ -1457,6 +1618,12 @@ static qboolean vk_create_device( VkPhysicalDevice physical_device, int device_i
 				memoryRequirements2 = qtrue;
 			} else if ( strcmp( ext, VK_EXT_DEBUG_MARKER_EXTENSION_NAME ) == 0 ) {
 				debugMarker = qtrue;
+#ifdef USE_MULTIVIEW
+			} else if ( strcmp( ext, VK_KHR_MULTIVIEW_EXTENSION_NAME ) == 0 ) {
+				supportsMultiview = qtrue;
+#endif
+			} else if ( strcmp( ext, VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME ) == 0 ) {
+				supportsFragmentDensity = qfalse; // deactivate FragmentDensity for now
 			}
 			// add this device extension to glConfig
 			if ( i != 0 ) {
@@ -1500,13 +1667,66 @@ static qboolean vk_create_device( VkPhysicalDevice physical_device, int device_i
 			vk.debugMarkers = qtrue;
 		}
 
-		qvkGetPhysicalDeviceFeatures( physical_device, &device_features );
-
-		if ( device_features.fillModeNonSolid == VK_FALSE ) {
-			ri.Printf( PRINT_ERROR, "...fillModeNonSolid feature is not supported\n" );
-			return qfalse;
+#ifdef USE_MULTIVIEW
+		qboolean r_multiviewEnabled = Cvar_VariableIntegerValue("r_multiviewEnabled");
+		if ( supportsMultiview && r_multiviewEnabled ) {
+			device_extension_list[ device_extension_count++ ] = VK_KHR_MULTIVIEW_EXTENSION_NAME;
+		}
+#endif
+		if ( supportsFragmentDensity ) {
+			device_extension_list[ device_extension_count++ ] = VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME;
 		}
 
+		VkPhysicalDeviceProperties2 device_physicalDeviceProperties;
+		device_physicalDeviceProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+		device_physicalDeviceProperties.pNext = NULL;
+
+#ifdef USE_MULTIVIEW
+		VkPhysicalDeviceMultiviewFeatures deviceMultiviewFeatures;
+		VkPhysicalDeviceMultiviewProperties deviceMultiviewProperties;
+
+		if ( supportsMultiview && r_multiviewEnabled )
+		{
+			// device feature request, including sample extensions
+			deviceMultiviewFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_FEATURES;
+			deviceMultiviewFeatures.pNext = NULL;
+			deviceMultiviewFeatures.multiview = VK_FALSE;
+			deviceMultiviewFeatures.multiviewGeometryShader = VK_FALSE;
+			deviceMultiviewFeatures.multiviewTessellationShader = VK_FALSE;
+			device_features.pNext = &deviceMultiviewFeatures;
+
+			// device properties request, including sample extensions
+			deviceMultiviewProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_PROPERTIES;
+			deviceMultiviewProperties.pNext = NULL;
+			deviceMultiviewProperties.maxMultiviewViewCount = 0;
+			deviceMultiviewProperties.maxMultiviewInstanceIndex = 0;
+			device_physicalDeviceProperties.pNext = &deviceMultiviewProperties;
+		}
+#endif
+		qvkGetPhysicalDeviceFeatures(physical_device, &device_features);
+		cvar_t * r_stereoEnabled = Cvar_Get( "r_stereoEnabled", "0", CVAR_ARCHIVE | CVAR_LATCH );
+
+#ifdef USE_MULTIVIEW
+		vk.NumEyes = (r_stereoEnabled->integer && !isMultiview) ? VR_FRAME_LAYER_EYE_MAX : 1;
+#else
+		vk.NumEyes = (r_stereoEnabled->integer) ? VR_FRAME_LAYER_EYE_MAX : 1;
+#endif
+		glConfig.stereoEnabled = (r_stereoEnabled->integer);
+
+
+		// Add any additional device extensions.
+		device_extension_list[ device_extension_count++ ] = VK_KHR_MAINTENANCE1_EXTENSION_NAME; // TODO check if needed by oculus Go or gear
+
+		// Create the device.
+#ifdef USE_MULTIVIEW
+		queue_desc.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+		queue_desc.pNext = NULL;
+		queue_desc.flags = 0;
+		queue_desc.queueFamilyIndex = vk.queue_family_index;
+		queue_desc.queueCount = 1;
+		queue_desc.pQueuePriorities = &priority;
+//#endif
+#endif
 		queue_desc.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
 		queue_desc.pNext = NULL;
 		queue_desc.flags = 0;
@@ -1536,18 +1756,31 @@ static qboolean vk_create_device( VkPhysicalDevice physical_device, int device_i
 		device_desc.pNext = NULL;
 		device_desc.flags = 0;
 		device_desc.queueCreateInfoCount = 1;
+#ifdef USE_MULTIVIEW
+		device_desc.pQueueCreateInfos = queue_desc;
+#else
 		device_desc.pQueueCreateInfos = &queue_desc;
+#endif
 		device_desc.enabledLayerCount = 0;
 		device_desc.ppEnabledLayerNames = NULL;
 		device_desc.enabledExtensionCount = device_extension_count;
 		device_desc.ppEnabledExtensionNames = device_extension_list;
 		device_desc.pEnabledFeatures = &features;
 
+#ifdef USE_OPENXR
+		if (!OpenXR_init_post_vk(&physical_device, device_desc))
+		{
+			ri.Printf(PRINT_ERROR, "OpenXR initialization failed.\n");
+			return qfalse;
+		}
+		ri.Printf(PRINT_ALL, "Initialized OpenXR with %d views.", xr.view_count);
+#else
 		res = qvkCreateDevice( physical_device, &device_desc, NULL, &vk.device );
 		if ( res < 0 ) {
 			ri.Printf( PRINT_ERROR, "vkCreateDevice returned %s\n", vk_result_string( res ) );
 			return qfalse;
 		}
+#endif
 	}
 
 	return qtrue;
@@ -1587,8 +1820,11 @@ static void init_vulkan_library( void )
 	//
 	// Get functions that do not depend on VkInstance (vk.instance == nullptr at this point).
 	//
+	INIT_INSTANCE_FUNCTION(vkGetInstanceProcAddr)
+
 	INIT_INSTANCE_FUNCTION(vkCreateInstance)
 	INIT_INSTANCE_FUNCTION(vkEnumerateInstanceExtensionProperties)
+	INIT_INSTANCE_FUNCTION(vkEnumerateInstanceLayerProperties)
 
 	//
 	// Get instance level functions.
@@ -1605,7 +1841,9 @@ static void init_vulkan_library( void )
 	INIT_INSTANCE_FUNCTION(vkGetPhysicalDeviceMemoryProperties)
 	INIT_INSTANCE_FUNCTION(vkGetPhysicalDeviceProperties)
 	INIT_INSTANCE_FUNCTION(vkGetPhysicalDeviceQueueFamilyProperties)
+#ifndef USE_OPENXR
 	INIT_INSTANCE_FUNCTION(vkDestroySurfaceKHR)
+#endif
 	INIT_INSTANCE_FUNCTION(vkGetPhysicalDeviceSurfaceCapabilitiesKHR)
 	INIT_INSTANCE_FUNCTION(vkGetPhysicalDeviceSurfaceFormatsKHR)
 	INIT_INSTANCE_FUNCTION(vkGetPhysicalDeviceSurfacePresentModesKHR)
@@ -1791,7 +2029,7 @@ static void deinit_vulkan_library( void )
 {
 	qvkCreateInstance							= NULL;
 	qvkEnumerateInstanceExtensionProperties		= NULL;
-
+	qvkEnumerateInstanceLayerProperties			= NULL;
 	qvkCreateDevice								= NULL;
 	qvkDestroyInstance							= NULL;
 	qvkEnumerateDeviceExtensionProperties		= NULL;
@@ -1802,7 +2040,9 @@ static void deinit_vulkan_library( void )
 	qvkGetPhysicalDeviceMemoryProperties		= NULL;
 	qvkGetPhysicalDeviceProperties				= NULL;
 	qvkGetPhysicalDeviceQueueFamilyProperties	= NULL;
+#ifndef USE_OPENXR
 	qvkDestroySurfaceKHR						= NULL;
+#endif
 	qvkGetPhysicalDeviceSurfaceCapabilitiesKHR	= NULL;
 	qvkGetPhysicalDeviceSurfaceFormatsKHR		= NULL;
 	qvkGetPhysicalDeviceSurfacePresentModesKHR	= NULL;
@@ -2071,6 +2311,38 @@ static VkSampler vk_find_sampler( const Vk_Sampler_Def *def ) {
 
 
 static void vk_update_attachment_descriptors( void ) {
+	// virtual menu
+#ifdef USE_VIRTUAL_MENU
+	if ( vk.virtual_menu.enable )
+	{
+		VkDescriptorImageInfo info;
+		VkWriteDescriptorSet desc;
+		Vk_Sampler_Def sd;
+
+		Com_Memset( &sd, 0, sizeof( sd ) );
+		sd.gl_mag_filter = sd.gl_min_filter = vk.blitFilter;
+		sd.address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		sd.max_lod_1_0 = qfalse;
+		sd.noAnisotropy = qfalse;
+
+		info.sampler = vk_find_sampler( &sd );
+		info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+		desc.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		desc.dstBinding = 0;
+		desc.dstArrayElement = 0;
+		desc.descriptorCount = 1;
+		desc.pNext = NULL;
+		desc.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		desc.pImageInfo = &info;
+		desc.pBufferInfo = NULL;
+		desc.pTexelBufferView = NULL;
+
+		info.imageView = vk.virtual_menu.singleSampleColor.view;
+		desc.dstSet = vk.virtual_menu.color_descriptorSet;
+		qvkUpdateDescriptorSets( vk.device, 1, &desc, 0, NULL );
+	}
+#endif
 
 	if ( vk.color_image_view )
 	{
@@ -2079,6 +2351,7 @@ static void vk_update_attachment_descriptors( void ) {
 		Vk_Sampler_Def sd;
 
 		Com_Memset( &sd, 0, sizeof( sd ) );
+#ifdef USE_SCREENMAP
 		sd.gl_mag_filter = sd.gl_min_filter = vk.blitFilter;
 		sd.address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 		sd.max_lod_1_0 = qtrue;
@@ -2111,6 +2384,7 @@ static void vk_update_attachment_descriptors( void ) {
 		desc.dstSet = vk.screenMap.color_descriptor;
 
 		qvkUpdateDescriptorSets( vk.device, 1, &desc, 0, NULL );
+#endif
 
 		// bloom images
 		if ( r_bloom->integer )
@@ -2176,6 +2450,25 @@ void vk_init_descriptors( void )
 		SET_OBJECT_NAME( vk.tess[ i ].uniform_descriptor, va( "uniform descriptor %i", i ), VK_DEBUG_REPORT_OBJECT_TYPE_DESCRIPTOR_SET_EXT );
 	}
 
+	// virtual menu
+#ifdef USE_VIRTUAL_MENU
+	if( vk.virtual_menu.enable ) {
+
+		alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		alloc.pNext = NULL;
+		alloc.descriptorPool = vk.descriptor_pool;
+		alloc.descriptorSetCount = 1;
+		//alloc.pSetLayouts = &vk.set_layout_sampler;
+		VkDescriptorSetLayout set_layouts[2] = {vk.set_layout_sampler, vk.set_layout_sampler};
+		alloc.pSetLayouts = set_layouts;
+
+		VK_CHECK( qvkAllocateDescriptorSets( vk.device, &alloc, &vk.virtual_menu.color_descriptorSet ) );
+
+		if ( !vk.color_image_view )
+			vk_update_attachment_descriptors();
+	}
+#endif
+
 	if ( vk.color_image_view )
 	{
 		alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -2194,9 +2487,10 @@ void vk_init_descriptors( void )
 			}
 		}
 
+#ifdef USE_SCREENMAP
 		alloc.descriptorSetCount = 1;
 		VK_CHECK( qvkAllocateDescriptorSets( vk.device, &alloc, &vk.screenMap.color_descriptor ) ); // screenmap
-
+#endif
 		vk_update_attachment_descriptors();
 	}
 }
@@ -2769,6 +3063,20 @@ static void vk_alloc_persistent_pipelines( void )
 		def.primitives = TRIANGLE_STRIP;
 		vk.images_debug_pipeline = vk_find_pipeline_ext( 0, &def, qfalse );
 	}
+	// virtual menu
+#ifdef USE_VIRTUAL_MENU
+	{
+		Com_Memset(&def, 0, sizeof(def));
+		def.face_culling = CT_FRONT_SIDED;//CT_BACK_SIDED;
+		def.primitives = TRIANGLE_LIST;
+		//def.state_bits = GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA;	// half transparent
+		//def.state_bits = GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE;							// transparent
+		def.state_bits = GLS_DEFAULT;													// opaque
+		def.shader_type = TYPE_SIGNLE_TEXTURE_IDENTITY;
+		def.isMenu = qtrue;
+		vk.virtual_menu_pipeline = vk_find_pipeline_ext( 0, &def, qtrue );
+	}
+#endif
 }
 
 void vk_create_blur_pipeline( uint32_t index, uint32_t width, uint32_t height, qboolean horizontal_pass );
@@ -3015,7 +3323,11 @@ static void create_color_attachment( uint32_t width, uint32_t height, VkSampleCo
 	create_desc.extent.height = height;
 	create_desc.extent.depth = 1;
 	create_desc.mipLevels = 1;
+#ifdef USE_MULTIVIEW
+	create_desc.arrayLayers = isMultiview ? 2 : 1;//GUNNM not sure
+#else
 	create_desc.arrayLayers = 1;
+#endif
 	create_desc.samples = samples;
 	create_desc.tiling = VK_IMAGE_TILING_OPTIMAL;
 	create_desc.usage = usage;
@@ -3111,6 +3423,7 @@ static void vk_create_attachments( void )
 			usage, &vk.color_image, &vk.color_image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, qfalse );
 
 		// screenmap
+#ifdef USE_SCREENMAP
 		usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 
 		if ( vk.screenMapSamples > VK_SAMPLE_COUNT_1_BIT ) {
@@ -3123,6 +3436,7 @@ static void vk_create_attachments( void )
 
 		// screenmap depth
 		create_depth_attachment( vk.screenMapWidth, vk.screenMapHeight, vk.screenMapSamples, &vk.screenMap.depth_image, &vk.screenMap.depth_image_view );
+#endif
 
 		if ( vk.msaaActive ) {
 			create_color_attachment( glConfig.vidWidth, glConfig.vidHeight, vkSamples, vk.color_format,
@@ -3138,6 +3452,23 @@ static void vk_create_attachments( void )
 	} // if ( vk.fboActive )
 
 	//vk_alloc_attachments();
+	// menu
+#ifdef USE_VIRTUAL_MENU
+	if ( vk.virtual_menu.enable ) {
+		VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+		//MSAA
+		if (vk.virtual_menu.samples > VK_SAMPLE_COUNT_1_BIT ) {
+			create_color_attachment(glConfig.menuWidth, glConfig.menuHeight, vk.virtual_menu.samples, vk.color_format,
+									usage, &vk.virtual_menu.multiSampleColor.image, &vk.virtual_menu.multiSampleColor.view, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, qtrue );
+		}
+		//color
+		create_color_attachment( glConfig.menuWidth, glConfig.menuHeight, VK_SAMPLE_COUNT_1_BIT, vk.color_format,
+			usage, &vk.virtual_menu.singleSampleColor.image, &vk.virtual_menu.singleSampleColor.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, qfalse );
+
+		//depth
+		create_depth_attachment( glConfig.menuWidth, glConfig.menuHeight, vk.virtual_menu.samples, &vk.virtual_menu.depth.image, &vk.virtual_menu.depth.view );
+	}
+#endif
 
 	create_depth_attachment( glConfig.vidWidth, glConfig.vidHeight, vkSamples, &vk.depth_image, &vk.depth_image_view );
 
@@ -3169,131 +3500,157 @@ static void vk_create_framebuffers( void )
 {
 	VkImageView attachments[3];
 	VkFramebufferCreateInfo desc;
-	uint32_t n;
+	uint32_t n, eye;
 
 	desc.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
 	desc.pNext = NULL;
 	desc.flags = 0;
 	desc.pAttachments = attachments;
-	desc.layers = 1;
+	desc.layers = 1; //If the render pass uses multiview, then layers must be one and each attachment requires a number of layers
+					 // that is greater than the maximum bit index set in the view mask in the subpasses
 
-	for ( n = 0; n < vk.swapchain_image_count; n++ )
+	for ( eye = 0; eye < vk.NumEyes; eye++ )
 	{
-		desc.renderPass = vk.render_pass.main;
-		desc.attachmentCount = 2;
-		if ( r_fbo->integer == 0 )
+		for ( n = 0; n < vk.swapchain_image_count; n++ )
 		{
-			desc.width = gls.windowWidth;
-			desc.height = gls.windowHeight;
-			attachments[0] = vk.swapchain_image_views[n];
-			attachments[1] = vk.depth_image_view;
-			VK_CHECK( qvkCreateFramebuffer( vk.device, &desc, NULL, &vk.framebuffers.main[n] ) );
-
-			SET_OBJECT_NAME( vk.framebuffers.main[n], va( "framebuffer - main %i", n ), VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT );
-		}
-		else
-		{
-			// same framebuffer configuration for main and post-bloom render passes
-			if ( n == 0 )
+			desc.renderPass = vk.render_pass.main;
+			desc.attachmentCount = 2;
+			if ( r_fbo->integer == 0 )
 			{
-				desc.width = glConfig.vidWidth;
-				desc.height = glConfig.vidHeight;
-				attachments[0] = vk.color_image_view;
+				desc.width = gls.windowWidth;
+				desc.height = gls.windowHeight;
+			attachments[0] = vk.swapchain_image_views[eye][n];
 				attachments[1] = vk.depth_image_view;
-				if ( vk.msaaActive )
-				{
+				if ( vk.msaaActive ) {
 					desc.attachmentCount = 3;
 					attachments[2] = vk.msaa_image_view;
 				}
-				VK_CHECK( qvkCreateFramebuffer( vk.device, &desc, NULL, &vk.framebuffers.main[n] ) );
-				SET_OBJECT_NAME( vk.framebuffers.main[n], "framebuffer - main", VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT );
+				VK_CHECK( qvkCreateFramebuffer( vk.device, &desc, NULL, &vk.framebuffers[eye].main[n] ) );
+				SET_OBJECT_NAME( vk.framebuffers[eye].main[n], va( "framebuffer - main %i", n ), VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT );
 			}
 			else
 			{
-				vk.framebuffers.main[n] = vk.framebuffers.main[0];
+				// same framebuffer configuration for main and post-bloom render passes
+				if ( n == 0 )
+				{
+					desc.width = glConfig.vidWidth;
+					desc.height = glConfig.vidHeight;
+					attachments[0] = vk.color_image_view;
+					attachments[1] = vk.depth_image_view;
+					if ( vk.msaaActive )
+					{
+						desc.attachmentCount = 3;
+						attachments[2] = vk.msaa_image_view;
+					}
+					VK_CHECK( qvkCreateFramebuffer( vk.device, &desc, NULL, &vk.framebuffers[eye].main[n] ) );
+					SET_OBJECT_NAME( vk.framebuffers[eye].main[n], "framebuffer - main", VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT );
+				}
+				else
+				{
+					vk.framebuffers[eye].main[n] = vk.framebuffers[eye].main[0];
+				}
+
+				// gamma correction
+				desc.renderPass = vk.render_pass.gamma;
+				desc.attachmentCount = 1;
+				desc.width = gls.windowWidth;
+				desc.height = gls.windowHeight;
+				attachments[0] = vk.swapchain_image_views[eye][n];
+				VK_CHECK( qvkCreateFramebuffer( vk.device, &desc, NULL, &vk.framebuffers[eye].gamma[n] ) );
+				SET_OBJECT_NAME( vk.framebuffers[eye].gamma[n], "framebuffer - gamma-correction", VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT );
+			}
+		}
+
+		if ( vk.fboActive )
+		{
+			// screenmap
+#ifdef USE_SCREENMAP
+			desc.renderPass = vk.render_pass.screenmap;
+			desc.attachmentCount = 2;
+			desc.width = vk.screenMapWidth;
+			desc.height = vk.screenMapHeight;
+			attachments[0] = vk.screenMap.color_image_view;
+			attachments[1] = vk.screenMap.depth_image_view;
+			if ( vk.screenMapSamples > VK_SAMPLE_COUNT_1_BIT )
+			{
+				desc.attachmentCount = 3;
+				attachments[2] = vk.screenMap.color_image_view_msaa;
+			}
+			VK_CHECK( qvkCreateFramebuffer( vk.device, &desc, NULL, &vk.framebuffers[eye].screenmap ) );
+			SET_OBJECT_NAME( vk.framebuffers[eye].screenmap, "framebuffer - screenmap", VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT );
+#endif
+
+			if ( vk.capture.image != VK_NULL_HANDLE )
+			{
+				attachments[0] = vk.capture.image_view;
+
+				desc.renderPass = vk.render_pass.capture;
+				desc.pAttachments = attachments;
+				desc.attachmentCount = 1;
+				desc.width = gls.captureWidth;
+				desc.height = gls.captureHeight;
+
+				VK_CHECK( qvkCreateFramebuffer( vk.device, &desc, NULL, &vk.framebuffers[eye].capture ) );
+				SET_OBJECT_NAME( vk.framebuffers[eye].capture, "framebuffer - capture", VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT );
 			}
 
-			// gamma correction
-			desc.renderPass = vk.render_pass.gamma;
-			desc.attachmentCount = 1;
-			desc.width = gls.windowWidth;
-			desc.height = gls.windowHeight;
-			attachments[0] = vk.swapchain_image_views[n];
-			VK_CHECK( qvkCreateFramebuffer( vk.device, &desc, NULL, &vk.framebuffers.gamma[n] ) );
-
-			SET_OBJECT_NAME( vk.framebuffers.gamma[n], "framebuffer - gamma-correction", VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT );
-		}
-	}
-
-	if ( vk.fboActive )
-	{
-		// screenmap
-		desc.renderPass = vk.render_pass.screenmap;
-		desc.attachmentCount = 2;
-		desc.width = vk.screenMapWidth;
-		desc.height = vk.screenMapHeight;
-		attachments[0] = vk.screenMap.color_image_view;
-		attachments[1] = vk.screenMap.depth_image_view;
-		if ( vk.screenMapSamples > VK_SAMPLE_COUNT_1_BIT )
-		{
-			desc.attachmentCount = 3;
-			attachments[2] = vk.screenMap.color_image_view_msaa;
-		}
-		VK_CHECK( qvkCreateFramebuffer( vk.device, &desc, NULL, &vk.framebuffers.screenmap ) );
-		SET_OBJECT_NAME( vk.framebuffers.screenmap, "framebuffer - screenmap", VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT );
-
-		if ( vk.capture.image != VK_NULL_HANDLE )
-		{
-			attachments[0] = vk.capture.image_view;
-
-			desc.renderPass = vk.render_pass.capture;
-			desc.pAttachments = attachments;
-			desc.attachmentCount = 1;
-			desc.width = gls.captureWidth;
-			desc.height = gls.captureHeight;
-
-			VK_CHECK( qvkCreateFramebuffer( vk.device, &desc, NULL, &vk.framebuffers.capture ) );
-			SET_OBJECT_NAME( vk.framebuffers.capture, "framebuffer - capture", VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT );
-		}
-
-		if ( r_bloom->integer )
-		{
-			uint32_t width = gls.captureWidth;
-			uint32_t height = gls.captureHeight;
-
-			// bloom color extraction
-			desc.renderPass = vk.render_pass.bloom_extract;
-			desc.width = width;
-			desc.height = height;
-
-			desc.attachmentCount = 1;
-			attachments[0] = vk.bloom_image_view[0];
-
-			VK_CHECK( qvkCreateFramebuffer( vk.device, &desc, NULL, &vk.framebuffers.bloom_extract ) );
-
-			SET_OBJECT_NAME( vk.framebuffers.bloom_extract, "framebuffer - bloom extraction", VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT );
-
-			for ( n = 0; n < ARRAY_LEN( vk.framebuffers.blur ); n += 2 )
+			if ( r_bloom->integer )
 			{
-				width /= 2;
-				height /= 2;
+				uint32_t width = gls.captureWidth;
+				uint32_t height = gls.captureHeight;
 
-				desc.renderPass = vk.render_pass.blur[n];
+				// bloom color extraction
+				desc.renderPass = vk.render_pass.bloom_extract;
 				desc.width = width;
 				desc.height = height;
 
 				desc.attachmentCount = 1;
+				attachments[0] = vk.bloom_image_view[0];
 
-				attachments[0] = vk.bloom_image_view[n+0+1];
-				VK_CHECK( qvkCreateFramebuffer( vk.device, &desc, NULL, &vk.framebuffers.blur[n+0] ) );
+				VK_CHECK( qvkCreateFramebuffer( vk.device, &desc, NULL, &vk.framebuffers[eye].bloom_extract ) );
 
-				attachments[0] = vk.bloom_image_view[n+1+1];
-				VK_CHECK( qvkCreateFramebuffer( vk.device, &desc, NULL, &vk.framebuffers.blur[n+1] ) );
+				SET_OBJECT_NAME( vk.framebuffers[eye].bloom_extract, "framebuffer - bloom extraction", VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT );
 
-				SET_OBJECT_NAME( vk.framebuffers.blur[n+0], va( "framebuffer - blur %i", n+0 ), VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT );
-				SET_OBJECT_NAME( vk.framebuffers.blur[n+1], va( "framebuffer - blur %i", n+1 ), VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT );
+				for ( n = 0; n < ARRAY_LEN( vk.framebuffers[eye].blur ); n += 2 )
+				{
+					width /= 2;
+					height /= 2;
+
+					desc.renderPass = vk.render_pass.blur[n];
+					desc.width = width;
+					desc.height = height;
+
+					desc.attachmentCount = 1;
+
+					attachments[0] = vk.bloom_image_view[n+0+1];
+					VK_CHECK( qvkCreateFramebuffer( vk.device, &desc, NULL, &vk.framebuffers[eye].blur[n+0] ) );
+
+					attachments[0] = vk.bloom_image_view[n+1+1];
+					VK_CHECK( qvkCreateFramebuffer( vk.device, &desc, NULL, &vk.framebuffers[eye].blur[n+1] ) );
+
+					SET_OBJECT_NAME( vk.framebuffers[eye].blur[n+0], va( "framebuffer - blur %i", n+0 ), VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT );
+					SET_OBJECT_NAME( vk.framebuffers[eye].blur[n+1], va( "framebuffer - blur %i", n+1 ), VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT );
+				}
 			}
 		}
+
+#ifdef USE_VIRTUAL_MENU
+		if ( vk.virtual_menu.enable ) {
+			desc.renderPass = vk.render_pass.menu;
+			desc.attachmentCount = 2;
+			desc.width = glConfig.menuWidth;
+			desc.height = glConfig.menuHeight;
+			attachments[0] = vk.virtual_menu.singleSampleColor.view;
+			attachments[1] = vk.virtual_menu.depth.view;
+			if ( vk.virtual_menu.samples > VK_SAMPLE_COUNT_1_BIT )
+			{
+				desc.attachmentCount = 3;
+				attachments[2] = vk.virtual_menu.multiSampleColor.view;
+			}
+			VK_CHECK( qvkCreateFramebuffer( vk.device, &desc, NULL, &vk.framebuffers[eye].menu ) );
+			SET_OBJECT_NAME( vk.framebuffers[eye].menu, "framebuffer - menu", VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT );
+		}
+#endif
 	}
 }
 
@@ -3346,55 +3703,65 @@ static void vk_destroy_sync_primitives( void  ) {
 
 
 static void vk_destroy_framebuffers( void ) {
-	uint32_t n;
+	uint32_t n, eye;
 
-	for ( n = 0; n < vk.swapchain_image_count; n++ ) {
-		if ( vk.framebuffers.main[n] != VK_NULL_HANDLE ) {
-			if ( !vk.fboActive || n == 0 ) {
-				qvkDestroyFramebuffer( vk.device, vk.framebuffers.main[n], NULL );
+	for ( eye = 0; eye < vk.NumEyes; eye++) {
+		for ( n = 0; n < vk.swapchain_image_count; n++ ) {
+			if ( vk.framebuffers[eye].main[n] != VK_NULL_HANDLE ) {
+				if ( !vk.fboActive || n == 0 ) {
+					qvkDestroyFramebuffer( vk.device, vk.framebuffers[eye].main[n], NULL );
+				}
+				vk.framebuffers[eye].main[n] = VK_NULL_HANDLE;
 			}
-			vk.framebuffers.main[n] = VK_NULL_HANDLE;
+			if ( vk.framebuffers[eye].gamma[n] != VK_NULL_HANDLE ) {
+				qvkDestroyFramebuffer( vk.device, vk.framebuffers[eye].gamma[n], NULL );
+				vk.framebuffers[eye].gamma[n] = VK_NULL_HANDLE;
+			}
 		}
-		if ( vk.framebuffers.gamma[n] != VK_NULL_HANDLE ) {
-			qvkDestroyFramebuffer( vk.device, vk.framebuffers.gamma[n], NULL );
-			vk.framebuffers.gamma[n] = VK_NULL_HANDLE;
+
+		if ( vk.framebuffers[eye].bloom_extract != VK_NULL_HANDLE ) {
+			qvkDestroyFramebuffer( vk.device, vk.framebuffers[eye].bloom_extract, NULL );
+			vk.framebuffers[eye].bloom_extract = VK_NULL_HANDLE;
 		}
-	}
 
-	if ( vk.framebuffers.bloom_extract != VK_NULL_HANDLE ) {
-		qvkDestroyFramebuffer( vk.device, vk.framebuffers.bloom_extract, NULL );
-		vk.framebuffers.bloom_extract = VK_NULL_HANDLE;
-	}
+#ifdef USE_SCREENMAP
+		if ( vk.framebuffers[eye].screenmap != VK_NULL_HANDLE ) {
+			qvkDestroyFramebuffer( vk.device, vk.framebuffers[eye].screenmap, NULL );
+			vk.framebuffers[eye].screenmap = VK_NULL_HANDLE;
+		}
+#endif
+#ifdef USE_VIRTUAL_MENU
+		if ( vk.framebuffers[eye].menu != VK_NULL_HANDLE ) {
+			qvkDestroyFramebuffer( vk.device, vk.framebuffers[eye].menu, NULL );
+			vk.framebuffers[eye].menu = VK_NULL_HANDLE;
+		}
+#endif
+		if ( vk.framebuffers[eye].capture != VK_NULL_HANDLE ) {
+			qvkDestroyFramebuffer( vk.device, vk.framebuffers[eye].capture, NULL );
+			vk.framebuffers[eye].capture = VK_NULL_HANDLE;
+		}
 
-	if ( vk.framebuffers.screenmap != VK_NULL_HANDLE ) {
-		qvkDestroyFramebuffer( vk.device, vk.framebuffers.screenmap, NULL );
-		vk.framebuffers.screenmap = VK_NULL_HANDLE;
-	}
-
-	if ( vk.framebuffers.capture != VK_NULL_HANDLE ) {
-		qvkDestroyFramebuffer( vk.device, vk.framebuffers.capture, NULL );
-		vk.framebuffers.capture = VK_NULL_HANDLE;
-	}
-
-	for ( n = 0; n < ARRAY_LEN( vk.framebuffers.blur ); n++ ) {
-		if ( vk.framebuffers.blur[n] != VK_NULL_HANDLE ) {
-			qvkDestroyFramebuffer( vk.device, vk.framebuffers.blur[n], NULL );
-			vk.framebuffers.blur[n] = VK_NULL_HANDLE;
+		for ( n = 0; n < ARRAY_LEN( vk.framebuffers[eye].blur ); n++ ) {
+			if ( vk.framebuffers[eye].blur[n] != VK_NULL_HANDLE ) {
+				qvkDestroyFramebuffer( vk.device, vk.framebuffers[eye].blur[n], NULL );
+				vk.framebuffers[eye].blur[n] = VK_NULL_HANDLE;
+			}
 		}
 	}
 }
 
 
 static void vk_destroy_swapchain( void ) {
-	uint32_t i;
+	uint32_t i, eye;
 
-	for ( i = 0; i < vk.swapchain_image_count; i++ ) {
-		if ( vk.swapchain_image_views[i] != VK_NULL_HANDLE ) {
-			qvkDestroyImageView( vk.device, vk.swapchain_image_views[i], NULL );
-			vk.swapchain_image_views[i] = VK_NULL_HANDLE;
+	for ( eye = 0; eye < vk.NumEyes; eye++) {
+		for ( i = 0; i < vk.swapchain_image_count; i++ ) {
+			if ( vk.swapchain_image_views[eye][i] != VK_NULL_HANDLE ) {
+				qvkDestroyImageView( vk.device, vk.swapchain_image_views[eye][i], NULL );
+				vk.swapchain_image_views[eye][i] = VK_NULL_HANDLE;
+			}
 		}
 	}
-
 	qvkDestroySwapchainKHR( vk.device, vk.swapchain, NULL );
 }
 
@@ -3424,6 +3791,9 @@ static void vk_restart_swapchain( const char *funcname )
 	setup_surface_formats( vk.physical_device );
 
 	vk_create_sync_primitives();
+#ifdef USE_OPENXR
+	OpenXR_get_swapchain_format(vk.present_format);
+#endif
 	vk_create_swapchain( vk.physical_device, vk.device, vk.surface, vk.present_format, &vk.swapchain );
 	vk_create_attachments();
 	vk_create_render_passes();
@@ -3451,13 +3821,13 @@ static void vk_set_render_scale( void )
 				if ( windowAspect >= renderAspect )
 				{
 					float scale = (float)gls.windowHeight / ( float ) glConfig.vidHeight;
-					int bias = ( gls.windowWidth - scale * (float) glConfig.vidWidth ) / 2;
+					int bias = (int)(( gls.windowWidth - scale * (float) glConfig.vidWidth ) / 2.0f);
 					vk.blitX0 += bias;
 				}
 				else
 				{
 					float scale = (float)gls.windowWidth / ( float ) glConfig.vidWidth;
-					int bias = ( gls.windowHeight - scale * (float) glConfig.vidHeight ) / 2;
+					int bias = (int)(( gls.windowHeight - scale * (float) glConfig.vidHeight ) / 2.0f);
 					vk.blitY0 += bias;
 				}
 			}
@@ -3493,6 +3863,25 @@ void vk_initialize( void )
 
 	qvkGetDeviceQueue( vk.device, vk.queue_family_index, 0, &vk.queue );
 
+#ifdef USE_OPENXR
+	const XrViewConfigurationView vp = xr.configViews[0];
+	glConfig.vidWidth = gls.windowWidth = vp.recommendedImageRectWidth;
+	glConfig.vidHeight = gls.windowHeight = vp.recommendedImageRectHeight;
+#endif
+
+#ifdef USE_VIRTUAL_MENU
+	vk.virtual_menu.enable = qtrue;
+	vk.virtual_menu.samples = VK_SAMPLE_COUNT_1_BIT;
+
+	// keep the 640x480 ratio
+	glConfig.menuWidth = glConfig.vidWidth;
+	glConfig.menuHeight = 480*glConfig.vidWidth/640;
+#endif
+#ifdef USE_NEOHUD
+	glConfig.hudWidth = glConfig.vidWidth;
+	glConfig.hudHeight = glConfig.vidHeight;
+#endif
+
 	qvkGetPhysicalDeviceProperties( vk.physical_device, &props );
 
 	vk.cmd = vk.tess + 0;
@@ -3513,10 +3902,11 @@ void vk_initialize( void )
 	if ( r_fbo->integer )
 	{
 		vk.fboActive = qtrue;
-		if ( r_ext_multisample->integer )
-		{
-			vk.msaaActive = qtrue;
-		}
+	}
+
+	if ( r_ext_multisample->integer )
+	{
+		vk.msaaActive = qtrue;
 	}
 
 	// multisampling
@@ -3533,6 +3923,11 @@ void vk_initialize( void )
 		vkSamples = VK_SAMPLE_COUNT_1_BIT;
 	}
 
+#ifdef USE_VIRTUAL_MENU
+	vk.virtual_menu.samples = vkSamples;
+#endif
+
+#ifdef USE_SCREENMAP
 	vk.screenMapSamples = MIN( vkMaxSamples, VK_SAMPLE_COUNT_4_BIT );
 
 	vk.screenMapWidth = (float) glConfig.vidWidth / 16.0;
@@ -3542,6 +3937,7 @@ void vk_initialize( void )
 	vk.screenMapHeight = (float) glConfig.vidHeight / 16.0;
 	if ( vk.screenMapHeight < 4 )
 		vk.screenMapHeight = 4;
+#endif
 
 	// fill glConfig information
 
@@ -3674,10 +4070,14 @@ void vk_initialize( void )
 	{
 		VkDescriptorPoolSize pool_size[3];
 		VkDescriptorPoolCreateInfo desc;
-		uint32_t i, maxSets;
+		int screenMapDescCount = 0;
+#ifdef USE_SCREENMAP
+		screenMapDescCount = 1;
+#endif
+		uint32_t maxSets;
 
 		pool_size[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		pool_size[0].descriptorCount = MAX_DRAWIMAGES + 1 + 1 + 1 + VK_NUM_BLOOM_PASSES * 2; // color, screenmap, bloom descriptors
+		pool_size[0].descriptorCount = MAX_DRAWIMAGES + 1 + screenMapDescCount + 1 + VK_NUM_BLOOM_PASSES * 2; // color, screenmap, bloom descriptors
 
 		pool_size[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
 		pool_size[1].descriptorCount = NUM_COMMAND_BUFFERS;
@@ -3720,7 +4120,13 @@ void vk_initialize( void )
 
 		push_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 		push_range.offset = 0;
-		push_range.size = 64; // 16 floats
+#ifdef USE_MULTIVIEW
+		//  64 : 16 mvp floats + 16
+		// 128 : 16 mvp floats (right proj) + 16 mvp floats (left proj) + 16 (clipping plane in eye space)
+		push_range.size = isMultiview ? 128 : 64;
+#else
+		push_range.size = 64; // 16 mvp floats
+#endif
 
 		// standard pipelines
 
@@ -3799,8 +4205,13 @@ void vk_initialize( void )
 	vk.renderPassIndex = RENDER_PASS_MAIN; // default render pass
 
 	// swapchain
+#ifdef USE_OPENXR
+	vk.initSwapchainLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	OpenXR_get_swapchain_format(vk.present_format);
+#else
 	vk.initSwapchainLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 	//vk.initSwapchainLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+#endif
 	vk_create_swapchain( vk.physical_device, vk.device, vk.surface, vk.present_format, &vk.swapchain );
 
 	// color/depth attachments
@@ -3858,6 +4269,7 @@ static void vk_destroy_attachments( void )
 	vk.depth_image = VK_NULL_HANDLE;
 	vk.depth_image_view = VK_NULL_HANDLE;
 
+#ifdef USE_SCREENMAP
 	if ( vk.screenMap.color_image ) {
 		qvkDestroyImage( vk.device, vk.screenMap.color_image, NULL );
 		qvkDestroyImageView( vk.device, vk.screenMap.color_image_view, NULL );
@@ -3878,7 +4290,27 @@ static void vk_destroy_attachments( void )
 		vk.screenMap.depth_image = VK_NULL_HANDLE;
 		vk.screenMap.depth_image_view = VK_NULL_HANDLE;
 	}
-
+#endif
+#ifdef USE_VIRTUAL_MENU
+	if ( vk.virtual_menu.singleSampleColor.image ) {
+		qvkDestroyImage( vk.device, vk.virtual_menu.singleSampleColor.image, NULL );
+		qvkDestroyImageView( vk.device, vk.virtual_menu.singleSampleColor.view, NULL );
+		vk.virtual_menu.singleSampleColor.image = VK_NULL_HANDLE;
+		vk.virtual_menu.singleSampleColor.view = VK_NULL_HANDLE;
+	}
+	if ( vk.virtual_menu.multiSampleColor.image ) {
+		qvkDestroyImage( vk.device, vk.virtual_menu.multiSampleColor.image, NULL );
+		qvkDestroyImageView( vk.device, vk.virtual_menu.multiSampleColor.view, NULL );
+		vk.virtual_menu.multiSampleColor.image = VK_NULL_HANDLE;
+		vk.virtual_menu.multiSampleColor.view = VK_NULL_HANDLE;
+	}
+	if ( vk.virtual_menu.multiSampleColor.image ) {
+		qvkDestroyImage( vk.device, vk.virtual_menu.multiSampleColor.image, NULL );
+		qvkDestroyImageView( vk.device, vk.virtual_menu.multiSampleColor.view, NULL );
+		vk.virtual_menu.multiSampleColor.image = VK_NULL_HANDLE;
+		vk.virtual_menu.multiSampleColor.view = VK_NULL_HANDLE;
+	}
+#endif
 	if ( vk.capture.image ) {
 		qvkDestroyImage( vk.device, vk.capture.image, NULL );
 		qvkDestroyImageView( vk.device, vk.capture.image_view, NULL );
@@ -3920,11 +4352,12 @@ static void vk_destroy_render_passes( void )
 		vk.render_pass.post_bloom = VK_NULL_HANDLE;
 	}
 
+#ifdef USE_SCREENMAP
 	if ( vk.render_pass.screenmap != VK_NULL_HANDLE ) {
 		qvkDestroyRenderPass( vk.device, vk.render_pass.screenmap, NULL );
 		vk.render_pass.screenmap = VK_NULL_HANDLE;
 	}
-
+#endif
 	if ( vk.render_pass.gamma != VK_NULL_HANDLE ) {
 		qvkDestroyRenderPass( vk.device, vk.render_pass.gamma, NULL );
 		vk.render_pass.gamma = VK_NULL_HANDLE;
@@ -4215,7 +4648,11 @@ void vk_create_image( image_t *image, int width, int height, int mip_levels ) {
 		desc.extent.height = height;
 		desc.extent.depth = 1;
 		desc.mipLevels = mip_levels;
+#ifdef USE_MULTIVIEW
+		desc.arrayLayers = isMultiview ? 2 : 1;//GUNNM useful ?
+#else
 		desc.arrayLayers = 1;
+#endif
 		desc.samples = VK_SAMPLE_COUNT_1_BIT;
 		desc.tiling = VK_IMAGE_TILING_OPTIMAL;
 		desc.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -4237,7 +4674,11 @@ void vk_create_image( image_t *image, int width, int height, int mip_levels ) {
 		desc.pNext = NULL;
 		desc.flags = 0;
 		desc.image = image->handle;
+#ifdef USE_MULTIVIEW
+		desc.viewType = isMultiview ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;//GUNNM not sure
+#else
 		desc.viewType = VK_IMAGE_VIEW_TYPE_2D;
+#endif
 		desc.format = format;
 		desc.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
 		desc.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
@@ -4247,8 +4688,11 @@ void vk_create_image( image_t *image, int width, int height, int mip_levels ) {
 		desc.subresourceRange.baseMipLevel = 0;
 		desc.subresourceRange.levelCount = VK_REMAINING_MIP_LEVELS;
 		desc.subresourceRange.baseArrayLayer = 0;
+#ifdef USE_MULTIVIEW
+		desc.subresourceRange.layerCount = isMultiview ? 2 : 1;//GUNNM not sure
+#else
 		desc.subresourceRange.layerCount = 1;
-
+#endif
 		VK_CHECK( qvkCreateImageView( vk.device, &desc, NULL, &image->view ) );
 	}
 
@@ -4501,6 +4945,9 @@ static qboolean vk_surface_format_color_depth( VkFormat format, int *r, int *g, 
 	}
 }
 
+// Q3 defaults to clockwise vertex order
+const VkFrontFace Q3_Default_FrontFace = VK_FRONT_FACE_CLOCKWISE;
+const VkFrontFace Q3_Default_FrontFace_inv = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 
 void vk_create_post_process_pipeline( int program_index, uint32_t width, uint32_t height )
 {
@@ -4595,7 +5042,7 @@ void vk_create_post_process_pipeline( int program_index, uint32_t width, uint32_
 	set_shader_stage_desc( shader_stages+0, VK_SHADER_STAGE_VERTEX_BIT, vk.modules.gamma_vs, "main" );
 	set_shader_stage_desc( shader_stages+1, VK_SHADER_STAGE_FRAGMENT_BIT, fsmodule, "main" );
 
-	frag_spec_data.gamma = 1.0 / (r_gamma->value);
+	frag_spec_data.gamma = 1.0f / (r_gamma->value);
 	frag_spec_data.overbright = (float)(1 << tr.overbrightBits);
 	frag_spec_data.greyscale = r_greyscale->value;
 	frag_spec_data.bloom_threshold = r_bloom_threshold->value;
@@ -4701,7 +5148,7 @@ void vk_create_post_process_pipeline( int program_index, uint32_t width, uint32_
 	rasterization_state.polygonMode = VK_POLYGON_MODE_FILL;
 	//rasterization_state.cullMode = VK_CULL_MODE_BACK_BIT; // VK_CULL_MODE_NONE;
 	rasterization_state.cullMode = VK_CULL_MODE_NONE;
-	rasterization_state.frontFace = VK_FRONT_FACE_CLOCKWISE; // Q3 defaults to clockwise vertex order
+	rasterization_state.frontFace = Q3_Default_FrontFace;
 	rasterization_state.depthBiasEnable = VK_FALSE;
 	rasterization_state.depthBiasConstantFactor = 0.0f;
 	rasterization_state.depthBiasClamp = 0.0f;
@@ -4890,7 +5337,7 @@ void vk_create_blur_pipeline( uint32_t index, uint32_t width, uint32_t height, q
 	rasterization_state.polygonMode = VK_POLYGON_MODE_FILL;
 	//rasterization_state.cullMode = VK_CULL_MODE_BACK_BIT; // VK_CULL_MODE_NONE;
 	rasterization_state.cullMode = VK_CULL_MODE_NONE;
-	rasterization_state.frontFace = VK_FRONT_FACE_CLOCKWISE; // Q3 defaults to clockwise vertex order
+	rasterization_state.frontFace = Q3_Default_FrontFace;
 	rasterization_state.depthBiasEnable = VK_FALSE;
 	rasterization_state.depthBiasConstantFactor = 0.0f;
 	rasterization_state.depthBiasClamp = 0.0f;
@@ -5600,7 +6047,13 @@ VkPipeline create_pipeline( const Vk_Pipeline_Def *def, renderPass_t renderPassI
 			break;
 	}
 
-	rasterization_state.frontFace = VK_FRONT_FACE_CLOCKWISE; // Q3 defaults to clockwise vertex order
+#ifdef USE_VIRTUAL_MENU
+	if ( def->isMenu )
+		// presentation is flipped with vulkan & VRAPI
+		rasterization_state.frontFace = Q3_Default_FrontFace_inv;
+	else
+#endif
+	rasterization_state.frontFace = Q3_Default_FrontFace;
 
 	 // depth bias state
 	if ( def->polygon_offset ) {
@@ -5631,6 +6084,10 @@ VkPipeline create_pipeline( const Vk_Pipeline_Def *def, renderPass_t renderPassI
 
 	multisample_state.rasterizationSamples = (vk.renderPassIndex == RENDER_PASS_SCREENMAP) ? vk.screenMapSamples : vkSamples;
 
+#ifdef USE_VIRTUAL_MENU
+	if (vk.renderPassIndex == RENDER_PASS_MENU)
+		multisample_state.rasterizationSamples = vk.virtual_menu.samples;
+#endif
 	multisample_state.sampleShadingEnable = VK_FALSE;
 	multisample_state.minSampleShading = 1.0f;
 	multisample_state.pSampleMask = NULL;
@@ -5802,9 +6259,16 @@ VkPipeline create_pipeline( const Vk_Pipeline_Def *def, renderPass_t renderPassI
 	//else
 		create_info.layout = vk.pipeline_layout;
 
+#ifdef USE_SCREENMAP
 	if ( renderPassIndex == RENDER_PASS_SCREENMAP )
 		create_info.renderPass = vk.render_pass.screenmap;
 	else
+#endif
+#ifdef USE_VIRTUAL_MENU
+	if( renderPassIndex == RENDER_PASS_MENU )
+		create_info.renderPass = vk.render_pass.menu;
+	else
+#endif
 		create_info.renderPass = vk.render_pass.main;
 
 	create_info.subpass = 0;
@@ -5894,6 +6358,14 @@ static void get_viewport_rect(VkRect2D *r)
 		r->extent.width = (float)backEnd.viewParms.viewportWidth * vk.renderScaleX;
 		r->extent.height = (float)backEnd.viewParms.viewportHeight * vk.renderScaleY;
 	}
+#if defined USE_OPENXR && defined USE_VIRTUAL_MENU
+	if ( vk.renderPassIndex != RENDER_PASS_MENU )
+		if (backEnd.projection2D || (!backEnd.projection2D && backEnd.viewParms.fovX != 90))
+			if (vk.eye == 0)
+				r->offset.x += vr_info.hmdinfo.ipd;
+			else
+				r->offset.x -= vr_info.hmdinfo.ipd;
+#endif
 }
 
 static void get_viewport(VkViewport *viewport, Vk_Depth_Range depth_range) {
@@ -5906,6 +6378,19 @@ static void get_viewport(VkViewport *viewport, Vk_Depth_Range depth_range) {
 	viewport->width = (float)r.extent.width;
 	viewport->height = (float)r.extent.height;
 
+#ifdef USE_VIRTUAL_MENU
+	// replace UI player model in screen // GUNNM this should be fixed in the VM
+	if ( !backEnd.projection2D && vk.renderPassIndex == RENDER_PASS_MENU ) {
+		//change scale
+		float scale = 0.6f;
+
+		viewport->width *= scale;
+		viewport->height *= scale;
+
+		viewport->x += 100;
+		viewport->y = 200;
+	}
+#endif
 	switch ( depth_range ) {
 		default:
 #ifdef USE_REVERSED_DEPTH
@@ -5969,15 +6454,38 @@ static void get_scissor_rect(VkRect2D *r) {
 		if (r->offset.y + r->extent.height > glConfig.vidHeight)
 			r->extent.height = glConfig.vidHeight - r->offset.y;
 	}
+#ifdef USE_VIRTUAL_MENU
+	if ( !backEnd.projection2D && vk.renderPassIndex == RENDER_PASS_MENU )
+	{
+		// GUNNM TODO check this, I can't remember why it's here
+		r->offset.x -= 300;
+		r->extent.width += 300;
+	}
+#endif
 }
 
+
+#ifdef USE_MULTIVIEW
+static void get_mvp( float *mvp , stereoFrame_t stereoFrame )
+{
+	const float *p = backEnd.viewParms.projectionMatrix[ stereoFrame ];
+
+	float proj[16];
+	Com_Memcpy( proj, p, 64 );
+
+	// update q3's proj matrix (opengl) to vulkan conventions: z - [0, 1] instead of [-1, 1] and invert y direction
+	proj[5] = -p[5];
+
+	myGlMultMatrix( vk_world.modelview_transform, proj, mvp );
+}
+#endif
 
 static void get_mvp_transform( float *mvp )
 {
 	if ( backEnd.projection2D )
 	{
-		float mvp0 = 2.0f / glConfig.vidWidth;
-		float mvp5 = 2.0f / glConfig.vidHeight;
+		float mvp0 = 2.0f / (float)vk.renderWidth;
+		float mvp5 = 2.0f / (float) vk.renderHeight;
 
 		mvp[0]  =  mvp0; mvp[1]  =  0.0f; mvp[2]  = 0.0f; mvp[3]  = 0.0f;
 		mvp[4]  =  0.0f; mvp[5]  =  mvp5; mvp[6]  = 0.0f; mvp[7]  = 0.0f;
@@ -5988,18 +6496,47 @@ static void get_mvp_transform( float *mvp )
 		mvp[8]  =  0.0f; mvp[9]  =  0.0f; mvp[10] = 1.0f; mvp[11] = 0.0f;
 		mvp[12] = -1.0f; mvp[13] = -1.0f; mvp[14] = 0.0f; mvp[15] = 1.0f;
 #endif
+#ifdef USE_MULTIVIEW
+		if( isMultiview )
+		{
+			// Set same mvp for both eye
+			Com_Memcpy( mvp + 16, mvp, 64 );
+		}
+#endif
 	}
 	else
 	{
+#ifdef USE_MULTIVIEW
+		if( isMultiview )
+		{
+			get_mvp( mvp, STEREO_LEFT );
+			get_mvp( mvp + 16, STEREO_RIGHT );
+		}
+		else
+		{
+			get_mvp( mvp, backEnd.viewParms.stereoFrame );
+		}
+#else
 		const float *p = backEnd.viewParms.projectionMatrix;
 		float proj[16];
 		Com_Memcpy( proj, p, 64 );
 
 		// update q3's proj matrix (opengl) to vulkan conventions: z - [0, 1] instead of [-1, 1] and invert y direction
+#ifndef USE_OPENXR
 		proj[5] = -p[5];
+#endif
 		//proj[10] = ( p[10] - 1.0f ) / 2.0f;
 		//proj[14] = p[14] / 2.0f;
+
+#ifdef USE_OPENXR
+		// Add stereo eye displacement
+		if (backEnd.viewParms.fovX == 90.0f )// && !backEnd.projection2D) {
+			myGlMultMatrix(vk_world.modelview_transform, (float*)xr.viewMatrix.m, vk_world.modelview_transform);
+		else
+			proj[5] = -p[5];
+#endif
 		myGlMultMatrix( vk_world.modelview_transform, proj, mvp );
+#endif
 	}
 }
 
@@ -6079,7 +6616,17 @@ void vk_clear_depth( qboolean clear_stencil ) {
 
 
 void vk_update_mvp( const float *m ) {
+#ifdef USE_MULTIVIEW
+#if defined ( _MSC_VER ) // Visual Studio does not have C99 support, therefore does not support variable-length array
 	float push_constants[16]; // mvp transform
+	//float push_constants[32]; // 2 x mvp transform for multiview
+#else
+	int proj_mat_nb = isMultiview ? 2 : 1; // send two MVP if multiview is enable
+	float push_constants[ 16 * proj_mat_nb ]; // mvp transform
+#endif
+#else
+	float push_constants[16]; // mvp transform
+#endif
 
 	//
 	// Specify push constants.
@@ -6456,7 +7003,7 @@ static void vk_begin_render_pass( VkRenderPass renderPass, VkFramebuffer frameBu
 
 void vk_begin_main_render_pass( void )
 {
-	VkFramebuffer frameBuffer = vk.framebuffers.main[ vk.swapchain_image_index ];
+	VkFramebuffer frameBuffer = vk.framebuffers[vk.eye].main[ vk.swapchain_image_index ];
 
 	vk.renderPassIndex = RENDER_PASS_MAIN;
 
@@ -6473,7 +7020,7 @@ void vk_begin_main_render_pass( void )
 
 void vk_begin_post_bloom_render_pass( void )
 {
-	VkFramebuffer frameBuffer = vk.framebuffers.main[ vk.swapchain_image_index ];
+	VkFramebuffer frameBuffer = vk.framebuffers[vk.eye].main[ vk.swapchain_image_index ];
 
 	vk.renderPassIndex = RENDER_PASS_POST_BLOOM;
 
@@ -6490,7 +7037,7 @@ void vk_begin_post_bloom_render_pass( void )
 
 void vk_begin_bloom_extract_render_pass( void )
 {
-	VkFramebuffer frameBuffer = vk.framebuffers.bloom_extract;
+	VkFramebuffer frameBuffer = vk.framebuffers[vk.eye].bloom_extract;
 
 	//vk.renderPassIndex = RENDER_PASS_BLOOM_EXTRACT; // doesn't matter, we will use dedicated pipelines
 
@@ -6507,7 +7054,7 @@ void vk_begin_bloom_extract_render_pass( void )
 
 void vk_begin_blur_render_pass( uint32_t index )
 {
-	VkFramebuffer frameBuffer = vk.framebuffers.blur[ index ];
+	VkFramebuffer frameBuffer = vk.framebuffers[vk.eye].blur[ index ];
 
 	//vk.renderPassIndex = RENDER_PASS_BLOOM_EXTRACT; // doesn't matter, we will use dedicated pipelines
 
@@ -6522,9 +7069,10 @@ void vk_begin_blur_render_pass( uint32_t index )
 }
 
 
+#ifdef USE_SCREENMAP
 static void vk_begin_screenmap_render_pass( void )
 {
-	VkFramebuffer frameBuffer = vk.framebuffers.screenmap;
+	VkFramebuffer frameBuffer = vk.framebuffers[vk.eye].screenmap;
 
 	record_image_layout_transition( vk.cmd->command_buffer, vk.screenMap.color_image, VK_IMAGE_ASPECT_COLOR_BIT,
 		0, VK_IMAGE_LAYOUT_UNDEFINED, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
@@ -6539,7 +7087,24 @@ static void vk_begin_screenmap_render_pass( void )
 
 	vk_begin_render_pass( vk.render_pass.screenmap, frameBuffer, qtrue, vk.renderWidth, vk.renderHeight );
 }
+#endif
 
+#ifdef USE_VIRTUAL_MENU
+void vk_begin_menu_render_pass( void )
+{
+	VkFramebuffer frameBuffer = vk.framebuffers[vk.eye].menu;
+
+	vk.renderWidth = glConfig.menuWidth;
+	vk.renderHeight = glConfig.menuHeight;
+
+	vk.renderPassIndex = RENDER_PASS_MENU;
+
+	vk.renderScaleX = (float)vk.renderWidth / (float)glConfig.menuWidth;
+	vk.renderScaleY = (float)vk.renderHeight / (float)glConfig.menuHeight;
+
+	vk_begin_render_pass( vk.render_pass.menu, frameBuffer, qtrue, vk.renderWidth, vk.renderHeight );
+}
+#endif
 
 void vk_end_render_pass( void )
 {
@@ -6549,11 +7114,15 @@ void vk_end_render_pass( void )
 }
 
 
+#ifdef USE_SCREENMAP
 static qboolean vk_find_screenmap_drawsurfs( void )
 {
 	const void *curCmd = &backEndData->commands.cmds;
 	const drawBufferCommand_t *db_cmd;
 	const drawSurfsCommand_t *ds_cmd;
+
+	if ( vk.screenMap.enable == qfalse )
+		return qfalse;
 
 	for ( ;; ) {
 		curCmd = PADP( curCmd, sizeof(void *) );
@@ -6570,17 +7139,25 @@ static qboolean vk_find_screenmap_drawsurfs( void )
 		}
 	}
 }
+#endif
 
 
 #ifndef UINT64_MAX
 #define UINT64_MAX 0xFFFFFFFFFFFFFFFFULL
 #endif
 
+void VR_SubmitFrame_layers( void ) {
+#ifdef USE_OPENXR
+	OpenXR_SubmitFrame_layers();
+#endif
+}
+
 void vk_begin_frame( void )
 {
 	VkCommandBufferBeginInfo begin_info;
 	//VkFramebuffer frameBuffer;
-	VkResult res;
+
+	vk.eye = (vk.NumEyes == 1) ? tr.refdef.stereoFrame : tr.refdef.stereoFrame - 1;
 
 	if ( vk.frame_count++ ) // might happen during stereo rendering
 		return;
@@ -6591,7 +7168,21 @@ void vk_begin_frame( void )
 		vk.cmd_index %= NUM_COMMAND_BUFFERS;
 
 		if ( !ri.CL_IsMinimized() ) {
+			VkResult res;
+#ifdef USE_OPENXR
+			res = OpenXR_acquireNextImage(vk.eye);
+			if ( res == VK_SUCCESS && vk.eye == 0 )
+			{
+				// Create projection matrices and view matrices for each eye
+				OpenXR_IN_Frame();
+
+			//	OpenXR_Get_HMD_Angles();
+
+				OpenXR_PollActions();
+			}
+#else
 			res = qvkAcquireNextImageKHR( vk.device, vk.swapchain, 5 * 1000000000ULL, vk.cmd->image_acquired, VK_NULL_HANDLE, &vk.swapchain_image_index );
+#endif
 			// when running via RDP: "Application has already acquired the maximum number of images (0x2)"
 			// probably caused by "device lost" errors
 			if ( res < 0 ) {
@@ -6622,7 +7213,13 @@ void vk_begin_frame( void )
 		// so we will reuse it with current swapchain image as well
 	}
 
+#ifndef USE_OPENXR
 	VK_CHECK( qvkResetFences( vk.device, 1, &vk.cmd->rendering_finished_fence ) );
+#endif
+#ifdef USE_VR
+	// TODO once
+	VRMOD_Get_HMD_Info();
+#endif
 
 	begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 	begin_info.pNext = NULL;
@@ -6636,15 +7233,15 @@ void vk_begin_frame( void )
 
 #if 0
 	// add explicit layout transition dependency
-	if ( vk.fboActive ) {
+	if ( vk.fboActive || vk.msaaActive ) {
 		record_image_layout_transition( vk.cmd->command_buffer,
-			vk.color_image, VK_IMAGE_ASPECT_COLOR_BIT,
+			getSwapchainColor_image( vk.eye, vk.swapchain_image_index ), VK_IMAGE_ASPECT_COLOR_BIT,
 			VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
 			VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
 
 	} else {
 		record_image_layout_transition( vk.cmd->command_buffer,
-			vk.swapchain_images[ vk.swapchain_image_index ], VK_IMAGE_ASPECT_COLOR_BIT,
+			getSwapchainImage( vk.eye, vk.swapchain_image_index ), VK_IMAGE_ASPECT_COLOR_BIT,
 			VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
 			VK_ACCESS_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR );
 	}
@@ -6660,11 +7257,14 @@ void vk_begin_frame( void )
 
 	vk.cmd->last_pipeline = VK_NULL_HANDLE;
 
+#ifdef USE_SCREENMAP
 	backEnd.screenMapDone = qfalse;
 
 	if ( vk_find_screenmap_drawsurfs() ) {
 		vk_begin_screenmap_render_pass();
-	} else {
+	} else
+#endif
+	{
 		vk_begin_main_render_pass();
 	}
 
@@ -6717,12 +7317,14 @@ static void vk_resize_geometry_buffer( void )
 }
 
 
+//Add post-process and submit queue
 void vk_end_frame( void )
 {
 	const VkPipelineStageFlags wait_dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+#if !defined USE_VRAPI && !defined USE_OPENXR
 	VkPresentInfoKHR present_info;
+#endif
 	VkSubmitInfo submit_info;
-	VkResult res;
 
 	if ( vk.frame_count == 0 )
 		return;
@@ -6749,7 +7351,7 @@ void vk_end_frame( void )
 			vk_end_render_pass();
 
 			// render to capture FBO
-			vk_begin_render_pass( vk.render_pass.capture, vk.framebuffers.capture, qfalse, gls.captureWidth, gls.captureHeight );
+			vk_begin_render_pass( vk.render_pass.capture, vk.framebuffers[vk.eye].capture, qfalse, gls.captureWidth, gls.captureHeight );
 			qvkCmdBindPipeline( vk.cmd->command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vk.capture_pipeline );
 			qvkCmdBindDescriptorSets( vk.cmd->command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vk.pipeline_layout_post_process, 0, 1, &vk.color_descriptor, 0, NULL );
 
@@ -6763,10 +7365,10 @@ void vk_end_frame( void )
 			vk.renderWidth = gls.windowWidth;
 			vk.renderHeight = gls.windowHeight;
 
-			vk.renderScaleX = 1.0;
-			vk.renderScaleY = 1.0;
+			vk.renderScaleX = 1.0f;
+			vk.renderScaleY = 1.0f;
 
-			vk_begin_render_pass( vk.render_pass.gamma, vk.framebuffers.gamma[ vk.swapchain_image_index ], qfalse, vk.renderWidth, vk.renderHeight );
+			vk_begin_render_pass( vk.render_pass.gamma, vk.framebuffers[vk.eye].gamma[ vk.swapchain_image_index ], qfalse, vk.renderWidth, vk.renderHeight );
 			qvkCmdBindPipeline( vk.cmd->command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vk.gamma_pipeline );
 			qvkCmdBindDescriptorSets( vk.cmd->command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vk.pipeline_layout_post_process, 0, 1, &vk.color_descriptor, 0, NULL );
 
@@ -6783,11 +7385,21 @@ void vk_end_frame( void )
 	submit_info.commandBufferCount = 1;
 	submit_info.pCommandBuffers = &vk.cmd->command_buffer;
 	if ( !ri.CL_IsMinimized() ) {
+#ifdef USE_OPENXR
+		submit_info.waitSemaphoreCount = 0;
+		submit_info.pWaitSemaphores = NULL;
+#else
 		submit_info.waitSemaphoreCount = 1;
 		submit_info.pWaitSemaphores = &vk.cmd->image_acquired;
+#endif
 		submit_info.pWaitDstStageMask = &wait_dst_stage_mask;
+#ifdef USE_OPENXR
+		submit_info.signalSemaphoreCount = 0;
+		submit_info.pSignalSemaphores = NULL;
+#else
 		submit_info.signalSemaphoreCount = 1;
 		submit_info.pSignalSemaphores = &vk.cmd->rendering_finished;
+#endif
 	} else {
 		submit_info.waitSemaphoreCount = 0;
 		submit_info.pWaitSemaphores = NULL;
@@ -6796,7 +7408,11 @@ void vk_end_frame( void )
 		submit_info.pSignalSemaphores = NULL;
 	}
 
+#ifdef USE_OPENXR
+	VK_CHECK(qvkQueueSubmit(vk.queue, 1, &submit_info, VK_NULL_HANDLE));
+#else
 	VK_CHECK( qvkQueueSubmit( vk.queue, 1, &submit_info, vk.cmd->rendering_finished_fence ) );
+#endif
 	vk.cmd->waitForFence = qtrue;
 
 	// presentation may take undefined time to complete, we can't measure it in a reliable way
@@ -6805,6 +7421,10 @@ void vk_end_frame( void )
 	if ( ri.CL_IsMinimized() )
 		return;
 
+#ifdef USE_OPENXR
+	VR_SubmitFrame_layers();
+#else
+	VkResult res;
 	present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 	present_info.pNext = NULL;
 	present_info.waitSemaphoreCount = 1;
@@ -6827,6 +7447,7 @@ void vk_end_frame( void )
 			ri.Error( ERR_FATAL, "vkQueuePresentKHR returned %s", vk_result_string( res ) );
 		}
 	}
+#endif
 }
 
 
@@ -6880,8 +7501,12 @@ void vk_read_pixels( byte *buffer, uint32_t width, uint32_t height )
 		}
 	} else {
 		srcImageAccess = VK_ACCESS_MEMORY_READ_BIT;
+#ifdef USE_OPENXR
+		srcImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+#else
 		srcImageLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-		srcImage = vk.swapchain_images[ vk.swapchain_image_index ];
+#endif
+		srcImage = getSwapchainImage( vk.eye, vk.swapchain_image_index );
 	}
 
 	Com_Memset( &desc, 0, sizeof( desc ) );
@@ -7090,12 +7715,12 @@ void vk_read_pixels( byte *buffer, uint32_t width, uint32_t height )
 qboolean vk_bloom( void )
 {
 	uint32_t i;
-
+#ifdef USE_SCREENMAP
 	if ( vk.renderPassIndex == RENDER_PASS_SCREENMAP )
 	{
 		return qfalse;
 	}
-
+#endif
 	if ( backEnd.doneBloom || !backEnd.doneSurfaces || !vk.fboActive )
 	{
 		return qfalse;

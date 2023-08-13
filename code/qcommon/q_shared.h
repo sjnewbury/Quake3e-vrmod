@@ -414,6 +414,7 @@ typedef	int	fixed16_t;
 #define M_LN2      0.693147180559945309417f
 #endif
 
+#if 0
 #ifdef __linux__
 #ifdef __GLIBC__
 #if idx64
@@ -422,6 +423,7 @@ __asm__(".symver logf,logf@GLIBC_2.2.5");
 __asm__(".symver powf,powf@GLIBC_2.2.5");
 __asm__(".symver expf,expf@GLIBC_2.2.5");
 __asm__(".symver memcpy,memcpy@GLIBC_2.2.5");
+#endif
 #endif
 #endif
 #endif
@@ -1239,6 +1241,17 @@ typedef struct playerState_s {
 	int			pmove_framecount;	// FIXME: don't transmit over the network
 	int			jumppad_frame;
 	int			entityEventSequence;
+#ifdef USE_VR_QVM
+	int     	vr_controller_type;
+	int     	delta_spawn_angles[3];
+	vec3_t		HMDOrigin;
+	vec3_t  	right_muzzle_position;
+	vec3_t  	right_hand_angles;
+	int		vrFlags;
+	vec3_t  	right_hand_position;
+	vec3_t  	left_hand_position;
+	vec3_t  	left_hand_angles;
+#endif
 } playerState_t;
 
 
@@ -1274,7 +1287,16 @@ typedef struct playerState_s {
 // usercmd_t is sent to the server each client frame
 typedef struct usercmd_s {
 	int				serverTime;
-	int				angles[3];
+	int				angles[3];				// View Angles
+#ifdef USE_VR_QVM
+	int 			hmd_origin[3];
+	int     		right_hand_angles[3];
+	int     		right_muzzle_pos[3];	// TODO apply need translation to right_hand_pos depending on weapon in order to remove this vector/command
+	int     		right_hand_pos[3];
+	int     		left_hand_pos[3];
+	int     		left_hand_angles[3];
+	int				vrFlags;
+#endif
 	int 			buttons;
 	byte			weapon;           // weapon 
 	signed char	forwardmove, rightmove, upmove;
@@ -1351,6 +1373,21 @@ typedef struct entityState_s {
 	int		torsoAnim;		// mask off ANIM_TOGGLEBIT
 
 	int		generic1;
+
+#ifdef USE_VR_QVM
+	trajectory_t 	hmdpos; // for calculating hmd position
+	trajectory_t 	rmpos;   // for calculating right hand weapon muzzle orientation
+	trajectory_t  	rapos;  // for calculating right hand weapon angles
+	vec3_t  		s_rightangles;
+	trajectory_t 	rpos;   // for calculating right hand weapon muzzle orientation
+	trajectory_t 	lpos;   // for calculating left hand weapon muzzle orientation
+	trajectory_t  	lapos;  // for calculating left hand weapon angles
+	vec3_t  		s_leftAngles;
+	int				vrFlags;
+#endif
+#if defined USE_VIRTUAL_MENU || defined USE_VIRTUAL_KEYBOARD
+	int 			menuYaw; // GUNNM usefull ?
+#endif
 } entityState_t;
 
 typedef enum {

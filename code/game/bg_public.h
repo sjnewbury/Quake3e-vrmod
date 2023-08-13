@@ -145,6 +145,7 @@ typedef enum {
 // pmove->pm_flags
 #define	PMF_DUCKED			1
 #define	PMF_JUMP_HELD		2
+#define PMF_NO_JUMP_ANIM	4		// no jump animation in VR (cause it's a kind of backflip for some characters)
 #define	PMF_BACKWARDS_JUMP	8		// go into backwards land
 #define	PMF_BACKWARDS_RUN	16		// coast down to backwards run
 #define	PMF_TIME_LAND		32		// pm_time is time before rejump
@@ -266,6 +267,26 @@ typedef enum {
 #define EF_AWARD_DENIED		0x00040000		// denied
 #define EF_TEAMVOTED		0x00080000		// already cast a team vote
 
+//players vrFlags
+#ifdef USE_LASER_SIGHT
+#define EF_LASER_SIGHT		0x00000001		// switch the laser beam
+#endif
+#ifdef USE_WEAPON_WHEEL
+#define EF_WEAPON_WHEEL		0x00000002		// switch the weapon selector wheel
+#endif
+#ifdef USE_VR
+#define EF_LEFT_HANDED		0x00000004		// weapon is in the left hand
+#endif
+#ifdef USE_VR_ZOOM
+#define EF_WEAPON_ZOOM		0x00000008		// weapon is in the left hand
+#endif
+#ifdef USE_DEATHCAM
+#define EF_FM_THIRDPERSON_1	0x00000010		//Camera will auto move to keep up with player
+#define EF_FM_THIRDPERSON_2	0x00000020		//Camera is completely free movement with the thumbstick
+#define EF_FM_FIRSTPERSON	0x00000040		//Obvious isn't it?..
+#endif
+#define EF_WEAPON_STABILISED 0x00000080
+
 // NOTE: may not have more than 16
 typedef enum {
 	PW_NONE,
@@ -316,13 +337,18 @@ typedef enum {
 	WP_RAILGUN,
 	WP_PLASMAGUN,
 	WP_BFG,
+#ifdef USE_GRAPPLING_HOOK
 	WP_GRAPPLING_HOOK,
+#endif
 #ifdef MISSIONPACK
 	WP_NAILGUN,
 	WP_PROX_LAUNCHER,
 	WP_CHAINGUN,
 #endif
 
+#ifdef USE_VR
+	WP_VR_CONTROLLER,
+#endif
 	WP_NUM_WEAPONS
 } weapon_t;
 

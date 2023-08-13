@@ -61,7 +61,7 @@ static qboolean	setArraysOnce;
 R_BindAnimatedImage
 =================
 */
-static void R_BindAnimatedImage( const textureBundle_t *bundle ) {
+void R_BindAnimatedImage( const textureBundle_t *bundle ) {
 	int64_t index;
 	double	v;
 
@@ -71,6 +71,7 @@ static void R_BindAnimatedImage( const textureBundle_t *bundle ) {
 		return;
 	}
 
+#ifdef USE_SCREENMAP
 	if ( bundle->isScreenMap /*&& backEnd.viewParms.frameSceneNum == 1*/ ) {
 		if ( !backEnd.screenMapDone )
 			GL_Bind( tr.blackImage );
@@ -78,7 +79,7 @@ static void R_BindAnimatedImage( const textureBundle_t *bundle ) {
 			vk_update_descriptor( glState.currenttmu + 2, vk.screenMap.color_descriptor );
 		return;
 	}
-
+#endif
 	if ( bundle->numImageAnimations <= 1 ) {
 		GL_Bind( bundle->image[0] );
 		return;
@@ -972,6 +973,15 @@ static void RB_IterateStagesGeneric( const shaderCommands_t *input )
 			pipeline = pStage->vk_mirror_pipeline[ fog_stage ];
 		else
 			pipeline = pStage->vk_pipeline[ fog_stage ];
+
+#ifdef USE_VIRTUAL_MENU
+		if ( backEnd.currentEntity->e.reType == RT_VR_MENU ) {
+			if (backEnd.viewParms.portalView != PV_MIRROR) {
+				pipeline = vk.virtual_menu_pipeline ;
+				vk_update_descriptor( 2, vk.virtual_menu.color_descriptorSet );
+			}
+		}
+#endif
 
 		if ( r_lightmap->integer && pStage->bundle[1].lightmap != LIGHTMAP_INDEX_NONE ) {
 			//GL_SelectTexture( 0 );

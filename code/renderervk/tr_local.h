@@ -1143,6 +1143,9 @@ typedef struct {
 	qboolean screenMapDone;
 	qboolean doneBloom;
 
+#ifdef USE_NEOHUD
+	qboolean isHUD;
+#endif
 } backEndState_t;
 
 typedef struct drawSurfsCommand_s drawSurfsCommand_t;
@@ -1302,6 +1305,9 @@ extern cvar_t	*r_lodbias;				// push/pull LOD transitions
 extern cvar_t	*r_lodscale;
 
 extern cvar_t	*r_fastsky;				// controls whether sky should be cleared or drawn
+#ifdef USE_DEATHCAM
+extern cvar_t	*vr_thirdPersonSpectator;
+#endif
 extern cvar_t	*r_neatsky;				// nomip and nopicmip for skyboxes, cnq3 like look
 extern cvar_t	*r_drawSun;				// controls drawing of sun quad
 extern cvar_t	*r_dynamiclight;		// dynamic lights enabled/disabled
@@ -1434,7 +1440,7 @@ int R_CullPointAndRadius( const vec3_t origin, float radius );
 int R_CullLocalPointAndRadius( const vec3_t origin, float radius );
 int R_CullDlight( const dlight_t *dl );
 
-void R_SetupProjection( viewParms_t *dest, float zProj, qboolean computeFrustum );
+void R_SetupProjection( viewParms_t *dest, float zProj, float zfar, qboolean computeFrustum );
 void R_RotateForEntity( const trRefEntity_t *ent, const viewParms_t *viewParms, orientationr_t *or );
 
 /*
@@ -1680,6 +1686,7 @@ void VK_LightingPass( void );
 qboolean R_LightCullBounds( const dlight_t* dl, const vec3_t mins, const vec3_t maxs );
 #endif // USE_PMLIGHT
 
+void R_BindAnimatedImage( const textureBundle_t *bundle );
 void R_DrawElements( int numIndexes, const glIndex_t *indexes );
 void R_ComputeColors( const int bundle, color4ub_t *dest, const shaderStage_t *pStage );
 void R_ComputeTexCoords( const int b, const textureBundle_t *bundle );
@@ -1707,6 +1714,7 @@ SKIES
 void R_InitSkyTexCoords( float cloudLayerHeight );
 void R_DrawSkyBox( const shaderCommands_t *shader );
 void RB_DrawSun( float scale, shader_t *shader );
+void RB_ClipSkyPolygons( shaderCommands_t *shader );
 
 /*
 ============================================================
@@ -1866,6 +1874,24 @@ typedef struct {
 	void	*data;
 } subImageCommand_t;
 
+#ifdef USE_VIRTUAL_MENU
+typedef struct {
+	int		commandId;
+} startMenuCommand_t;
+#endif
+
+#ifdef USE_VIRTUAL_MENU
+typedef struct {
+	int		commandId;
+} endMenuCommand_t;
+#endif
+
+#ifdef USE_NEOHUD
+typedef struct {
+	int		commandId;
+} drawHUDCommand_t;
+#endif
+
 typedef struct {
 	int		commandId;
 } swapBuffersCommand_t;
@@ -1914,6 +1940,13 @@ typedef enum {
 	RC_STRETCH_PIC,
 	RC_DRAW_SURFS,
 	RC_DRAW_BUFFER,
+#ifdef USE_VIRTUAL_MENU
+	RC_DRAW_MENU_START,
+	RC_DRAW_MENU_END,
+#endif
+#ifdef USE_NEOHUD
+	RC_DRAW_HUD,
+#endif
 	RC_SWAP_BUFFERS,
 	RC_FINISHBLOOM,
 	RC_COLORMASK,
@@ -1962,6 +1995,13 @@ void RE_StretchPic ( float x, float y, float w, float h,
 					  float s1, float t1, float s2, float t2, qhandle_t hShader );
 void RE_BeginFrame( stereoFrame_t stereoFrame );
 void RE_EndFrame( int *frontEndMsec, int *backEndMsec );
+#ifdef USE_VIRTUAL_MENU
+void RE_BeginMenuTexture( stereoFrame_t stereoFrame );
+void RE_EndMenuTexture( void );
+#endif
+#ifdef USE_NEOHUD
+void RE_RenderHUD( void );
+#endif
 void RE_TakeVideoFrame( int width, int height,
 		byte *captureBuffer, byte *encodeBuffer, qboolean motionJpeg );
 
@@ -1970,6 +2010,8 @@ void RE_ThrottleBackend( void );
 qboolean RE_CanMinimize( void );
 const glconfig_t *RE_GetConfig( void );
 void RE_VertexLighting( qboolean allowed );
+
+qboolean R_HaveExtension( const char *ext );
 
 #ifndef USE_VULKAN
 #define GLE( ret, name, ... ) extern ret ( APIENTRY * q##name )( __VA_ARGS__ );

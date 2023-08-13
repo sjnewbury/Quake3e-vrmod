@@ -1632,7 +1632,7 @@ SKIES
 */
 
 void R_InitSkyTexCoords( float cloudLayerHeight );
-void R_DrawSkyBox( const shaderCommands_t *shader );
+void R_DrawSkyBox( shaderCommands_t *shader );
 void RB_DrawSun( float scale, shader_t *shader );
 
 /*

@@ -131,6 +131,10 @@ typedef struct {
 	// and teleport direction changes
 	vec3_t		viewangles;
 
+#ifdef USE_LASER_SIGHT
+	int 		mouseDz[2];  // virtual menu intersection depth
+#endif
+
 	int			serverId;			// included in each client message so the server
 												// can tell if it is for a prior map_restart
 	// big stuff at end of structure so most offsets are 15 bits or less
@@ -510,6 +514,9 @@ void Con_ToggleConsole_f( void );
 void Con_ClearNotify( void );
 void Con_RunConsole( void );
 void Con_DrawConsole( void );
+#ifdef USE_VIRTUAL_MENU
+void Con_DrawNotify( void );
+#endif
 void Con_PageUp( int lines );
 void Con_PageDown( int lines );
 void Con_Top( void );

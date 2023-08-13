@@ -22,6 +22,11 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // tr_surf.c
 #include "tr_local.h"
 
+#ifdef USE_VIRTUAL_MENU
+#include "../vrmod/VRMOD_VMenu.h"
+#include "../vrmod/VRMOD_VKeyboard.h"
+#endif
+
 /*
 
   THIS ENTIRE FILE IS BACK END
@@ -653,6 +658,36 @@ static void RB_SurfaceRailCore( void ) {
 	DoRailCore( start, end, right, len, r_railCoreWidth->integer );
 }
 
+/*
+** RB_Surface_LaserSight
+*/
+#ifdef USE_LASER_SIGHT
+void RB_Surface_LaserSight( void ) {
+	int			len;
+	vec3_t		right;
+	vec3_t		vec;
+	vec3_t		start, end;
+	vec3_t		v1, v2;
+
+	const refEntity_t *e = &backEnd.currentEntity->e;
+
+	VectorCopy( e->oldorigin, start );
+	VectorCopy( e->origin, end );
+
+	VectorSubtract( end, start, vec );
+	len = VectorNormalize( vec );
+
+	// compute side vector
+	VectorSubtract( start, backEnd.viewParms.or.origin, v1 );
+	VectorNormalize( v1 );
+	VectorSubtract( end, backEnd.viewParms.or.origin, v2 );
+	VectorNormalize( v2 );
+	CrossProduct( v1, v2, right );
+	VectorNormalize( right );
+
+	DoRailCore(start, end, right, len, 1);
+}
+#endif
 
 /*
 ** RB_SurfaceLightningBolt
@@ -1404,6 +1439,24 @@ static void RB_SurfaceEntity( const surfaceType_t *surfType ) {
 	case RT_LIGHTNING:
 		RB_SurfaceLightningBolt();
 		break;
+#ifdef USE_LASER_SIGHT
+	case RT_LASERSIGHT:
+		RB_Surface_LaserSight();
+		break;
+#endif
+#ifdef USE_VIRTUAL_MENU
+	case RT_VR_MENU:
+		RB_Surface_VR_menu_plane();
+		break;
+	case RT_VR_MAIN_MENU_FLOOR:
+		RB_Surface_VR_main_menu_floor();
+		break;
+#endif
+#ifdef USE_VIRTUAL_KEYBOARD
+	case RT_VR_KEYBOARD:
+		RB_Surface_VR_keyboard();
+		break;
+#endif
 	default:
 		RB_SurfaceAxis();
 		break;

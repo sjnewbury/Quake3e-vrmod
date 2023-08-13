@@ -21,6 +21,15 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 // cl.input.c  -- builds an intended movement command to send to the server
 
+#ifdef USE_VR
+#include "../vrmod/VRMOD_common.h"
+#include "../vrmod/quaternion.h"
+#endif
+
+#ifdef USE_VIRTUAL_MENU
+#include "../vrmod/VRMOD_VMenu.h"
+#endif
+
 #include "client.h"
 
 static unsigned frame_msec;
@@ -454,6 +463,12 @@ static void CL_MouseMove( usercmd_t *cmd )
 		my = cl.mouseDy[cl.mouseIndex];
 	}
 
+#ifdef USE_VIRTUAL_MENU
+	// Non-VR players can use the vr menu
+	vr_info.mouse_x = cl.mouseDx[cl.mouseIndex];
+	vr_info.mouse_y = cl.mouseDy[cl.mouseIndex];
+#endif
+
 	cl.mouseIndex ^= 1;
 	cl.mouseDx[cl.mouseIndex] = 0;
 	cl.mouseDy[cl.mouseIndex] = 0;
@@ -593,8 +608,13 @@ static usercmd_t CL_CreateCmd( void ) {
 
 	VectorCopy( cl.viewangles, oldAngles );
 
+#ifdef USE_VR
+	// Set cl.viewangles from HMD orientation
+	VRMOD_CL_Get_HMD_Angles();
+#else
 	// keyboard angle adjustment
 	CL_AdjustAngles ();
+#endif
 
 	Com_Memset( &cmd, 0, sizeof( cmd ) );
 
@@ -603,8 +623,22 @@ static usercmd_t CL_CreateCmd( void ) {
 	// get basic movement from keyboard
 	CL_KeyMove( &cmd );
 
+#ifndef USE_VR
 	// get basic movement from mouse
 	CL_MouseMove( &cmd );
+#endif
+
+#ifdef USE_VR
+	// Set cl.vrOrigin from HMD pos
+	VRMOD_CL_Get_HMD_Position();
+
+	VRMOD_CL_GestureCrouchCheck();
+
+	// get cl.rightAngles from VR controller orientation
+	VRMOD_CL_handle_controllers();
+
+	in_strafe.active = qtrue; // use strafe to simulate HMD pos
+#endif
 
 	// get basic movement from joystick
 	CL_JoystickMove( &cmd );
@@ -617,7 +651,11 @@ static usercmd_t CL_CreateCmd( void ) {
 	}
 
 	// store out the final values
+#ifndef USE_VR
 	CL_FinishMove( &cmd );
+#else
+	VRMOD_CL_Finish_VR_Move( &cmd );
+#endif
 
 	// draw debug graphs of turning for mouse testing
 	if ( cl_debugMove->integer ) {
@@ -643,10 +681,12 @@ static void CL_CreateNewCommands( void ) {
 	int			cmdNum;
 
 	// no need to create usercmds until we have a gamestate
+	// (except in VR main menu)
+#ifndef USE_VR
 	if ( cls.state < CA_PRIMED ) {
 		return;
 	}
-
+#endif
 	frame_msec = com_frameTime - old_com_frameTime;
 
 	// if running over 1000fps, act as if each frame is 1ms
@@ -855,6 +895,8 @@ Called every frame to builds and sends a command packet to the server.
 =================
 */
 void CL_SendCmd( void ) {
+	// in VR we always need to send HMD & VR controller angle to client
+#ifndef USE_VR
 	// don't send any message if not connected
 	if ( cls.state < CA_CONNECTED ) {
 		return;
@@ -864,6 +906,7 @@ void CL_SendCmd( void ) {
 	if ( com_sv_running->integer && sv_paused->integer && cl_paused->integer ) {
 		return;
 	}
+#endif
 
 	// we create commands even if a demo is playing,
 	CL_CreateNewCommands();
@@ -1009,6 +1052,10 @@ void CL_InitInput( void ) {
 	m_filter = Cvar_Get( "m_filter", "0", CVAR_ARCHIVE_ND );
 #endif
 	Cvar_SetDescription( m_filter, "Toggle use of mouse 'smoothing'." );
+
+#ifdef USE_VIRTUAL_MENU
+	MENU_Init();
+#endif
 }
 
 

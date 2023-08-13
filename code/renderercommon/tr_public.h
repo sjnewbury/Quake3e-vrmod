@@ -121,7 +121,13 @@ typedef struct {
 	void	(*VertexLighting)( qboolean allowed );
 	void	(*SyncRender)( void );
 
-
+#ifdef USE_VIRTUAL_MENU
+	void	(*BeginMenuTexture)( stereoFrame_t stereoFrame );
+	void	(*EndMenuTexture)( void );
+#endif
+#ifdef USE_NEOHUD
+	void	(*RenderHUD)( void );
+#endif
 } refexport_t;
 
 //
@@ -238,6 +244,9 @@ extern	refimport_t	ri;
 typedef	refexport_t* (QDECL *GetRefAPI_t) (int apiVersion, refimport_t * rimp);
 #else
 refexport_t*GetRefAPI( int apiVersion, refimport_t *rimp );
+#endif
+#ifdef USE_MULTIVIEW
+qboolean isMultiview; //TODO find me a better place
 #endif
 
 #endif	// __TR_PUBLIC_H

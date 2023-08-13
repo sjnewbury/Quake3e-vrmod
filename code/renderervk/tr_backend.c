@@ -470,6 +470,7 @@ static void RB_Hyperspace( void ) {
 	RB_AddQuadStamp2( backEnd.refdef.x, backEnd.refdef.y, backEnd.refdef.width, backEnd.refdef.height,
 		0.0, 0.0, 0.0, 0.0, c );
 
+	vk_clear_color( colorBlack );// GUNNM FIXME : avoid a glitch when teleport. ( did I forgot something in renderpass creation? )
 	RB_EndSurface();
 
 	tess.numIndexes = 0;
@@ -566,6 +567,23 @@ static void RB_BeginDrawingView( void ) {
 
 	// we will only draw a sun if there was sky rendered in this view
 	backEnd.skyRenderedThisView = qfalse;
+
+	//
+	// clear the screen to avoid messy background in birdview (deathcam)
+	//
+
+	// fixme, this hide the menu when loading
+	//(cg. cent->currentState.eFlags & EF_DEAD);
+	int vr_thirdPersonSpectator = Cvar_VariableIntegerValue("vr_thirdPersonSpectator");
+
+#ifdef USE_DEATHCAM
+	if ( vr_thirdPersonSpectator )
+	{
+		// red.. ish
+		vec4_t redish = { 0.1f, 0.01f, 0.01f, 1.0f };// { 0.12f, 0.0f, 0.05f, 1.0f };
+		vk_clear_color( colorBlack );
+	}
+#endif
 }
 
 #ifdef USE_PMLIGHT
@@ -735,7 +753,7 @@ static void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 						{
 							viewParms_t temp = backEnd.viewParms;
 
-							R_SetupProjection(&temp, r_znear->value, qfalse);
+							R_SetupProjection(&temp, r_znear->value, tr.viewParms.zFar, qfalse);
 
 							qglMatrixMode(GL_PROJECTION);
 							qglLoadMatrixf(temp.projectionMatrix);
@@ -951,7 +969,7 @@ static void RB_RenderLitSurfList( dlight_t* dl ) {
 						{
 							viewParms_t temp = backEnd.viewParms;
 
-							R_SetupProjection(&temp, r_znear->value, qfalse);
+							R_SetupProjection(&temp, r_znear->value, tr.viewParms.zFar, qfalse);
 
 							qglMatrixMode(GL_PROJECTION);
 							qglLoadMatrixf(temp.projectionMatrix);
@@ -1670,7 +1688,94 @@ static const void *RB_FinishBloom( const void *data )
 	return (const void *)(cmd + 1);
 }
 
+#ifdef USE_VIRTUAL_MENU
+static void ChangeRenderPassIfNeed ( qboolean ShowInMenu )
+{
+	if ( ShowInMenu && vk.renderPassIndex == RENDER_PASS_MENU )
+		return;
+	else if ( ShowInMenu )
+	{
+		vk_end_render_pass();
+		vk_begin_menu_render_pass();
+	}
+	else
+	{
+		RB_EndSurface();
+		vk_end_render_pass();
+#ifdef USE_SCREENMAP
+		if ( vk_find_screenmap_drawsurfs() ) {
+			ri.Printf( PRINT_ALL, "call vk_begin_screenmap_render_pass\n");
+			vk_begin_screenmap_render_pass();
+		} else
+#endif
+		{
+			vk_begin_main_render_pass();
+		}
+	}
 
+	const vec4_t color = {0.0, 0.0, 0.0, 1.0};//RGBA
+
+	backEnd.projection2D = qtrue; // to ensure we have viewport that occupies entire window
+	vk_clear_color( color );
+	backEnd.projection2D = qfalse;
+
+	backEnd.drawConsole = qtrue;
+}
+#endif
+
+
+/*
+=============
+RB_DRAW_MENU_START
+=============
+*/
+#ifdef USE_VIRTUAL_MENU
+static const void *RB_DRAW_MENU_START( const void *data ) {
+	const startMenuCommand_t *cmd = data;
+
+	ChangeRenderPassIfNeed( qtrue );
+
+	return (const void *)(cmd + 1);
+}
+#endif
+
+/*
+=============
+RB_DRAW_MENU_END
+=============
+*/
+#ifdef USE_VIRTUAL_MENU
+static const void *RB_DRAW_MENU_END( const void *data ) {
+	const endMenuCommand_t *cmd = data;
+
+	ChangeRenderPassIfNeed( qfalse );
+
+	return (const void *)(cmd + 1);
+}
+#endif
+
+/*
+=============
+RB_DRAW_HUD
+=============
+*/
+#ifdef USE_NEOHUD
+static const void *RB_DRAW_HUD( const void *data ) {
+	const drawHUDCommand_t *cmd = data;
+
+	backEnd.isHUD = qtrue;
+
+	return (const void *)(cmd + 1);
+}
+#endif
+
+
+/*
+=============
+RB_SwapBuffers
+
+=============
+*/
 static const void *RB_SwapBuffers( const void *data ) {
 
 	const swapBuffersCommand_t	*cmd;
@@ -1739,6 +1844,9 @@ static const void *RB_SwapBuffers( const void *data ) {
 	backEnd.doneBloom = qfalse;
 #endif
 
+#ifdef USE_NEOHUD
+	backEnd.isHUD = qfalse;
+#endif
 	return (const void *)(cmd + 1);
 }
 
@@ -1771,6 +1879,19 @@ void RB_ExecuteRenderCommands( const void *data ) {
 		case RC_SWAP_BUFFERS:
 			data = RB_SwapBuffers( data );
 			break;
+#ifdef USE_VIRTUAL_MENU
+		case RC_DRAW_MENU_START:
+			data = RB_DRAW_MENU_START( data );
+			break;
+		case RC_DRAW_MENU_END:
+			data = RB_DRAW_MENU_END( data );
+			break;
+#endif
+#ifdef USE_NEOHUD
+		case RC_DRAW_HUD:
+			data = RB_DRAW_HUD( data );
+			break;
+#endif
 		case RC_FINISHBLOOM:
 			data = RB_FinishBloom(data);
 			break;

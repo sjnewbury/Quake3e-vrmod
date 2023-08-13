@@ -581,16 +581,49 @@ void MSG_WriteDeltaUsercmdKey( msg_t *msg, int key, const usercmd_t *from, const
 		MSG_WriteBits( msg, 0, 1 );
 		MSG_WriteBits( msg, to->serverTime, 32 );
 	}
-	if (from->angles[0] == to->angles[0] &&
-		from->angles[1] == to->angles[1] &&
-		from->angles[2] == to->angles[2] &&
-		from->forwardmove == to->forwardmove &&
-		from->rightmove == to->rightmove &&
-		from->upmove == to->upmove &&
-		from->buttons == to->buttons &&
-		from->weapon == to->weapon) {
-			MSG_WriteBits( msg, 0, 1 );				// no change
-			return;
+		// Head orientation
+	if (from->angles[0] == to->angles[0] && // HMD PITCH
+		from->angles[1] == to->angles[1] && // HMD YAW
+		from->angles[2] == to->angles[2] && // HMD ROLL
+		from->forwardmove 	== to->forwardmove &&
+		from->rightmove 	== to->rightmove &&
+		from->upmove 		== to->upmove &&
+		from->buttons 		== to->buttons &&
+		from->weapon 		== to->weapon
+#ifdef USE_VR_QVM
+		&&
+		// Right hand orientation
+		from->hmd_origin[0] == to->hmd_origin[0] && 	// VR headset pos X
+		from->hmd_origin[1] == to->hmd_origin[1] && 	// VR headset pos Y
+		from->hmd_origin[2] == to->hmd_origin[2] &&		// VR headset pos Z
+		// Right hand orientation
+		from->right_hand_angles[0] == to->right_hand_angles[0] && 	// right vr controller PITCH
+		from->right_hand_angles[1] == to->right_hand_angles[1] && 	// right vr controller YAW
+		from->right_hand_angles[2] == to->right_hand_angles[2] &&	// right vr controller ROLL
+		// Right hand weapon muzzle origin
+		from->right_muzzle_pos[0] == to->right_muzzle_pos[0] &&
+		from->right_muzzle_pos[1] == to->right_muzzle_pos[1] &&
+		from->right_muzzle_pos[2] == to->right_muzzle_pos[2] &&
+
+		// Right hand origin
+		from->right_hand_pos[0] == to->right_hand_pos[0] &&
+		from->right_hand_pos[1] == to->right_hand_pos[1] &&
+		from->right_hand_pos[2] == to->right_hand_pos[2] &&
+
+		// Left hand orientation
+		from->left_hand_angles[0] == to->left_hand_angles[0] && 	// left vr controller PITCH
+		from->left_hand_angles[1] == to->left_hand_angles[1] && 	// left vr controller YAW
+		from->left_hand_angles[2] == to->left_hand_angles[2] &&		// left vr controller ROLL
+		// Left hand origin
+		from->left_hand_pos[0] == to->left_hand_pos[0] &&
+		from->left_hand_pos[1] == to->left_hand_pos[1] &&
+		from->left_hand_pos[2] == to->left_hand_pos[2] &&
+
+		from->vrFlags == to->vrFlags
+#endif
+			) {
+		MSG_WriteBits( msg, 0, 1 );				// no change
+		return;
 	}
 	key ^= to->serverTime;
 	MSG_WriteBits( msg, 1, 1 );
@@ -602,6 +635,33 @@ void MSG_WriteDeltaUsercmdKey( msg_t *msg, int key, const usercmd_t *from, const
 	MSG_WriteDeltaKey( msg, key, from->upmove, to->upmove, 8 );
 	MSG_WriteDeltaKey( msg, key, from->buttons, to->buttons, 16 );
 	MSG_WriteDeltaKey( msg, key, from->weapon, to->weapon, 8 );
+#ifdef USE_VR_QVM
+	// Write the VR heaset actual
+	MSG_WriteDeltaKey( msg, key, from->hmd_origin[0], to->hmd_origin[0], 32 );
+	MSG_WriteDeltaKey( msg, key, from->hmd_origin[1], to->hmd_origin[1], 32 );
+	MSG_WriteDeltaKey( msg, key, from->hmd_origin[2], to->hmd_origin[2], 32 );
+	// Write the right hand angle
+	MSG_WriteDeltaKey( msg, key, from->right_hand_angles[0], to->right_hand_angles[0], 16 );
+	MSG_WriteDeltaKey( msg, key, from->right_hand_angles[1], to->right_hand_angles[1], 16 );
+	MSG_WriteDeltaKey( msg, key, from->right_hand_angles[2], to->right_hand_angles[2], 16 );
+	// Write the right hand weapon position
+	MSG_WriteDeltaKey( msg, key, from->right_muzzle_pos[0], to->right_muzzle_pos[0], 32 );
+	MSG_WriteDeltaKey( msg, key, from->right_muzzle_pos[1], to->right_muzzle_pos[1], 32 );
+	MSG_WriteDeltaKey( msg, key, from->right_muzzle_pos[2], to->right_muzzle_pos[2], 32 );
+	// Write the right hand position
+	MSG_WriteDeltaKey(msg, key, from->right_hand_pos[0], to->right_hand_pos[0], 32);
+	MSG_WriteDeltaKey(msg, key, from->right_hand_pos[1], to->right_hand_pos[1], 32);
+	MSG_WriteDeltaKey(msg, key, from->right_hand_pos[2], to->right_hand_pos[2], 32);
+	// Write the right hand position
+	MSG_WriteDeltaKey(msg, key, from->left_hand_pos[0], to->left_hand_pos[0], 32);
+	MSG_WriteDeltaKey(msg, key, from->left_hand_pos[1], to->left_hand_pos[1], 32);
+	MSG_WriteDeltaKey(msg, key, from->left_hand_pos[2], to->left_hand_pos[2], 32);
+	// Write the right hand angle
+	MSG_WriteDeltaKey(msg, key, from->left_hand_angles[0], to->left_hand_angles[0], 16);
+	MSG_WriteDeltaKey(msg, key, from->left_hand_angles[1], to->left_hand_angles[1], 16);
+	MSG_WriteDeltaKey(msg, key, from->left_hand_angles[2], to->left_hand_angles[2], 16);
+	MSG_WriteDeltaKey(msg, key, from->vrFlags, to->vrFlags, 16);
+#endif
 }
 
 
@@ -632,6 +692,33 @@ void MSG_ReadDeltaUsercmdKey( msg_t *msg, int key, const usercmd_t *from, usercm
 			to->upmove = -127;
 		to->buttons = MSG_ReadDeltaKey( msg, key, from->buttons, 16);
 		to->weapon = MSG_ReadDeltaKey( msg, key, from->weapon, 8);
+#ifdef USE_VR_QVM
+		// Read the VR headset actual
+		to->hmd_origin[0] = MSG_ReadDeltaKey(msg, key, from->hmd_origin[0], 32);
+		to->hmd_origin[1] = MSG_ReadDeltaKey(msg, key, from->hmd_origin[1], 32);
+		to->hmd_origin[2] = MSG_ReadDeltaKey(msg, key, from->hmd_origin[2], 32);
+		// Read the right hand angle
+		to->right_hand_angles[0] = MSG_ReadDeltaKey(msg, key, from->right_hand_angles[0], 16);
+		to->right_hand_angles[1] = MSG_ReadDeltaKey(msg, key, from->right_hand_angles[1], 16);
+		to->right_hand_angles[2] = MSG_ReadDeltaKey(msg, key, from->right_hand_angles[2], 16);
+		// Read the right hand pos
+		to->right_muzzle_pos[0] = MSG_ReadDeltaKey(msg, key, from->right_muzzle_pos[0], 32);
+		to->right_muzzle_pos[1] = MSG_ReadDeltaKey(msg, key, from->right_muzzle_pos[1], 32);
+		to->right_muzzle_pos[2] = MSG_ReadDeltaKey(msg, key, from->right_muzzle_pos[2], 32);
+		// Read the right hand pos
+		to->right_hand_pos[0] = MSG_ReadDeltaKey(msg, key, from->right_hand_pos[0], 32);
+		to->right_hand_pos[1] = MSG_ReadDeltaKey(msg, key, from->right_hand_pos[1], 32);
+		to->right_hand_pos[2] = MSG_ReadDeltaKey(msg, key, from->right_hand_pos[2], 32);
+		// Read the left hand pos
+		to->left_hand_pos[0] = MSG_ReadDeltaKey(msg, key, from->left_hand_pos[0], 32);
+		to->left_hand_pos[1] = MSG_ReadDeltaKey(msg, key, from->left_hand_pos[1], 32);
+		to->left_hand_pos[2] = MSG_ReadDeltaKey(msg, key, from->left_hand_pos[2], 32);
+		// Read the left hand angle
+		to->left_hand_angles[0] = MSG_ReadDeltaKey(msg, key, from->left_hand_angles[0], 16);
+		to->left_hand_angles[1] = MSG_ReadDeltaKey(msg, key, from->left_hand_angles[1], 16);
+		to->left_hand_angles[2] = MSG_ReadDeltaKey(msg, key, from->left_hand_angles[2], 16);
+		to->vrFlags = MSG_ReadDeltaKey(msg, key, from->vrFlags, 16);
+#endif
 	} else {
 		to->angles[0] = from->angles[0];
 		to->angles[1] = from->angles[1];
@@ -641,6 +728,33 @@ void MSG_ReadDeltaUsercmdKey( msg_t *msg, int key, const usercmd_t *from, usercm
 		to->upmove = from->upmove;
 		to->buttons = from->buttons;
 		to->weapon = from->weapon;
+#ifdef USE_VR_QVM
+		to->hmd_origin[0] = from->hmd_origin[0];
+		to->hmd_origin[1] = from->hmd_origin[1];
+		to->hmd_origin[2] = from->hmd_origin[2];
+
+		to->right_hand_angles[0] = from->right_hand_angles[0];
+		to->right_hand_angles[1] = from->right_hand_angles[1];
+		to->right_hand_angles[2] = from->right_hand_angles[2];
+
+		to->right_muzzle_pos[0] = from->right_muzzle_pos[0];
+		to->right_muzzle_pos[1] = from->right_muzzle_pos[1];
+		to->right_muzzle_pos[2] = from->right_muzzle_pos[2];
+
+		to->right_hand_pos[0] = from->right_hand_pos[0];
+		to->right_hand_pos[1] = from->right_hand_pos[1];
+		to->right_hand_pos[2] = from->right_hand_pos[2];
+
+		to->left_hand_angles[0] = from->left_hand_angles[0];
+		to->left_hand_angles[1] = from->left_hand_angles[1];
+		to->left_hand_angles[2] = from->left_hand_angles[2];
+
+		to->left_hand_pos[0] = from->left_hand_pos[0];
+		to->left_hand_pos[1] = from->left_hand_pos[1];
+		to->left_hand_pos[2] = from->left_hand_pos[2];
+
+		to->vrFlags = from->vrFlags;
+#endif
 	}
 }
 
@@ -730,6 +844,81 @@ static const netField_t entityStateFields[] =
 { NETF(angles2[2]), 0 },
 { NETF(constantLight), 32 },
 { NETF(frame), 16 }
+#ifdef USE_VR_QVM
+,
+//-------------
+{ NETF(hmdpos.trType), 8 },
+{ NETF(hmdpos.trTime), 32 },
+{ NETF(hmdpos.trDuration), 32 },
+{ NETF(hmdpos.trBase[0]), 0 },
+{ NETF(hmdpos.trBase[1]), 0 },
+{ NETF(hmdpos.trBase[2]), 0 },
+{ NETF(hmdpos.trDelta[0]), 0 },
+{ NETF(hmdpos.trDelta[1]), 0 },
+{ NETF(hmdpos.trDelta[2]), 0 },
+//-------------
+{ NETF(rmpos.trType), 8 },
+{ NETF(rmpos.trTime), 32 },
+{ NETF(rmpos.trDuration), 32 },
+{ NETF(rmpos.trBase[0]), 0 },
+{ NETF(rmpos.trBase[1]), 0 },
+{ NETF(rmpos.trBase[2]), 0 },
+{ NETF(rmpos.trDelta[0]), 0 },
+{ NETF(rmpos.trDelta[1]), 0 },
+{ NETF(rmpos.trDelta[2]), 0 },
+
+{ NETF(rapos.trType), 8 },
+{ NETF(rapos.trTime), 32 },
+{ NETF(rapos.trDuration), 32 },
+{ NETF(rapos.trBase[0]), 0 },
+{ NETF(rapos.trBase[1]), 0 },
+{ NETF(rapos.trBase[2]), 0 },
+{ NETF(rapos.trDelta[0]), 0 },
+{ NETF(rapos.trDelta[1]), 0 },
+{ NETF(rapos.trDelta[2]), 0 },
+
+{ NETF(s_rightangles[0]), 0 },
+{ NETF(s_rightangles[1]), 0 },
+{ NETF(s_rightangles[2]), 0 },
+
+{ NETF(rpos.trType), 8 },
+{ NETF(rpos.trTime), 32 },
+{ NETF(rpos.trDuration), 32 },
+{ NETF(rpos.trBase[0]), 0 },
+{ NETF(rpos.trBase[1]), 0 },
+{ NETF(rpos.trBase[2]), 0 },
+{ NETF(rpos.trDelta[0]), 0 },
+{ NETF(rpos.trDelta[1]), 0 },
+{ NETF(rpos.trDelta[2]), 0 },
+
+{ NETF(lpos.trType), 8 },
+{ NETF(lpos.trTime), 32 },
+{ NETF(lpos.trDuration), 32 },
+{ NETF(lpos.trBase[0]), 0 },
+{ NETF(lpos.trBase[1]), 0 },
+{ NETF(lpos.trBase[2]), 0 },
+{ NETF(lpos.trDelta[0]), 0 },
+{ NETF(lpos.trDelta[1]), 0 },
+{ NETF(lpos.trDelta[2]), 0 },
+{ NETF(lapos.trType), 8 },
+{ NETF(lapos.trTime), 32 },
+{ NETF(lapos.trDuration), 32 },
+{ NETF(lapos.trBase[0]), 0 },
+{ NETF(lapos.trBase[1]), 0 },
+{ NETF(lapos.trBase[2]), 0 },
+{ NETF(lapos.trDelta[0]), 0 },
+{ NETF(lapos.trDelta[1]), 0 },
+{ NETF(lapos.trDelta[2]), 0 },
+{ NETF(s_leftAngles[0]), 0 },
+{ NETF(s_leftAngles[1]), 0 },
+{ NETF(s_leftAngles[2]), 0 },
+
+{ NETF(vrFlags), 8 }
+#endif
+#if defined USE_VIRTUAL_MENU || defined USE_VIRTUAL_KEYBOARD
+,
+{ NETF(menuYaw), 8 } // GUNNM is it really usefull?
+#endif
 };
 
 
@@ -1046,6 +1235,39 @@ static const netField_t playerStateFields[] =
 { PSF(grapplePoint[2]), 0 },
 { PSF(jumppad_ent), GENTITYNUM_BITS },
 { PSF(loopSound), 16 }
+#ifdef USE_VR_QVM
+,
+{ PSF(vr_controller_type), 0 },
+{ PSF(delta_spawn_angles[0]), 0 },
+{ PSF(delta_spawn_angles[1]), 0 },
+{ PSF(delta_spawn_angles[2]), 0 },
+
+{ PSF(HMDOrigin[0]), 0 },
+{ PSF(HMDOrigin[1]), 0 },
+{ PSF(HMDOrigin[2]), 0 },
+
+{ PSF(right_muzzle_position[0]), 0 },
+{ PSF(right_muzzle_position[1]), 0 },
+{ PSF(right_muzzle_position[2]), 0 },
+
+{ PSF(right_hand_angles[0]), 0 },
+{ PSF(right_hand_angles[1]), 0 },
+{ PSF(right_hand_angles[2]), 0 },
+
+{ PSF(right_hand_position[0]), 0 },
+{ PSF(right_hand_position[1]), 0 },
+{ PSF(right_hand_position[2]), 0 },
+
+{ PSF(left_hand_position[0]), 0 },
+{ PSF(left_hand_position[1]), 0 },
+{ PSF(left_hand_position[2]), 0 },
+
+{ PSF(left_hand_angles[0]), 0 },
+{ PSF(left_hand_angles[1]), 0 },
+{ PSF(left_hand_angles[2]), 0 },
+
+{ PSF(vrFlags), 5 }
+#endif
 };
 
 /*

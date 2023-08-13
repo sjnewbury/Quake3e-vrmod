@@ -1625,6 +1625,11 @@ void CIN_DrawCinematic( int handle ) {
 	w = w * cls.scale;
 	h = h * cls.scale;
 #else
+#ifdef USE_VIRTUAL_MENU
+	// when render in virtual menu, we need to use menu resolution
+	cls.glconfig.vidWidth  = cls.glconfig.menuWidth;
+	cls.glconfig.vidHeight = cls.glconfig.menuHeight;
+#endif
 	SCR_AdjustFrom640( &x, &y, &w, &h );
 #endif
 

@@ -305,6 +305,10 @@ void RE_BeginFrame( stereoFrame_t stereoFrame ) {
 	backEnd.doneBloom = qfalse;
 #endif
 
+#ifdef USE_NEOHUD
+	backEnd.isHUD = qfalse;
+#endif
+
 	tr.frameCount++;
 	tr.frameSceneNum = 0;
 
@@ -396,23 +400,82 @@ void RE_EndFrame( int *frontEndMsec, int *backEndMsec ) {
 	}
 	cmd->commandId = RC_SWAP_BUFFERS;
 
-	R_PerformanceCounters();
+	if (vk.NumEyes == 1 || tr.refdef.stereoFrame == 1)
+	{
+		R_PerformanceCounters();
+	}
 
 	R_IssueRenderCommands();
 
-	R_InitNextFrame();
+	if (vk.NumEyes == 1 || tr.refdef.stereoFrame == 2)
+	{
+		R_InitNextFrame();
 
-	if ( frontEndMsec ) {
-		*frontEndMsec = tr.frontEndMsec;
+		if ( frontEndMsec ) {
+			*frontEndMsec = tr.frontEndMsec;
+		}
+		tr.frontEndMsec = 0;
+		if ( backEndMsec ) {
+			*backEndMsec = backEnd.pc.msec;
+		}
+		backEnd.pc.msec = 0;
 	}
-	tr.frontEndMsec = 0;
-	if ( backEndMsec ) {
-		*backEndMsec = backEnd.pc.msec;
-	}
-	backEnd.pc.msec = 0;
 	backEnd.throttle = qfalse;
 }
 
+/*
+=============
+RE_BeginMenuTexture
+Only add RC_DRAW_MENU_START command, whose request a render pass change
+=============
+*/
+#ifdef USE_VIRTUAL_MENU
+void RE_BeginMenuTexture( stereoFrame_t stereoFrame )
+{
+	startMenuCommand_t	*cmd;
+	cmd = R_GetCommandBuffer( sizeof( *cmd ) );
+	if ( !cmd ) {
+		return;
+	}
+	cmd->commandId = RC_DRAW_MENU_START;
+}
+#endif
+
+/*
+=============
+RE_EndMenuTexture
+Only add RC_DRAW_MENU_END command, whose request a render pass change
+=============
+*/
+#ifdef USE_VIRTUAL_MENU
+void RE_EndMenuTexture( void )
+{
+	endMenuCommand_t	*cmd;
+	cmd = R_GetCommandBuffer( sizeof( *cmd ) );
+	if ( !cmd ) {
+		return;
+	}
+	cmd->commandId = RC_DRAW_MENU_END;
+}
+#endif
+
+/*
+=============
+RE_RenderHUD
+Add RC_DRAW_HUD command
+=============
+*/
+#ifdef USE_NEOHUD
+void RE_RenderHUD (void )
+{
+	drawHUDCommand_t	*cmd;
+	cmd = R_GetCommandBuffer( sizeof( *cmd ) );
+	if ( !cmd ) {
+		return;
+	}
+	cmd->commandId = RC_DRAW_HUD;
+}
+#endif
 
 /*
 =============

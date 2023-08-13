@@ -25,6 +25,10 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include <string.h> // memcpy
 
+#ifdef USE_OPENXR
+#include "../vrmod/OpenXR/OPENXR_imp.h"
+#endif
+
 trGlobals_t		tr;
 
 static const float s_flipMatrix[16] = {
@@ -491,7 +495,7 @@ Set up the culling frustum planes for the current view using the results we got 
 the projection matrix.
 =================
 */
-static void R_SetupFrustum( viewParms_t *dest, float xmin, float xmax, float ymax, float zProj, float stereoSep )
+static void R_SetupFrustum( viewParms_t *dest, float xmin, float xmax, float ymax, float zProj, float zFar, float stereoSep )
 {
 	vec3_t ofsorigin;
 	float oppleg, adjleg, length;
@@ -545,11 +549,23 @@ static void R_SetupFrustum( viewParms_t *dest, float xmin, float xmax, float yma
 		SetPlaneSignbits( &dest->frustum[i] );
 	}
 
-	// near clipping plane
-	VectorCopy( dest->or.axis[0], dest->frustum[4].normal );
-	dest->frustum[4].type = PLANE_NON_AXIAL;
-	dest->frustum[4].dist = DotProduct( ofsorigin, dest->frustum[4].normal ) + r_znear->value;
-	SetPlaneSignbits( &dest->frustum[4] );
+	if (zFar != 0.0f)
+	{
+		// near clipping plane
+		/*VectorCopy( dest->or.axis[0], dest->frustum[4].normal );
+		dest->frustum[4].type = PLANE_NON_AXIAL;
+		dest->frustum[4].dist = DotProduct( ofsorigin, dest->frustum[4].normal ) + r_znear->value;
+		SetPlaneSignbits( &dest->frustum[4] );*/
+
+		// GUNNM this is from ioq3Quest
+		vec3_t farpoint;
+		VectorMA(ofsorigin, zFar, dest->or.axis[0], farpoint);
+		VectorScale(dest->or.axis[0], -1.0f, dest->frustum[4].normal);
+		dest->frustum[4].type = PLANE_NON_AXIAL;
+		dest->frustum[4].dist = DotProduct ( farpoint, dest->frustum[4].normal ) + r_znear->value;
+		SetPlaneSignbits( &dest->frustum[4] );
+		//dest->flags |= VPF_FARPLANEFRUSTUM;
+	}
 }
 
 
@@ -558,7 +574,7 @@ static void R_SetupFrustum( viewParms_t *dest, float xmin, float xmax, float yma
 R_SetupProjection
 ===============
 */
-void R_SetupProjection( viewParms_t *dest, float zProj, qboolean computeFrustum )
+void R_SetupProjection( viewParms_t *dest, float zProj, float zFar, qboolean computeFrustum )
 {
 	float	xmin, xmax, ymin, ymax;
 	float	width, height, stereoSep = r_stereoSeparation->value;
@@ -604,7 +620,7 @@ void R_SetupProjection( viewParms_t *dest, float zProj, qboolean computeFrustum 
 	
 	// Now that we have all the data for the projection matrix we can also setup the view frustum.
 	if ( computeFrustum )
-		R_SetupFrustum( dest, xmin, xmax, ymax, zProj, stereoSep );
+		R_SetupFrustum( dest, xmin, xmax, ymax, zProj, zFar, stereoSep );
 }
 
 
@@ -1601,7 +1617,7 @@ static void R_AddEntitySurfaces( void ) {
 
 		//
 		// the weapon model must be handled special --
-		// we don't want the hacked first person weapon position showing in 
+		// we don't want the hacked weapon position showing in
 		// mirrors, because the true body position will already be drawn
 		//
 		if ( (ent->e.renderfx & RF_FIRST_PERSON) && (tr.viewParms.portalView != PV_NONE) ) {
@@ -1617,6 +1633,16 @@ static void R_AddEntitySurfaces( void ) {
 		case RT_LIGHTNING:
 		case RT_RAIL_CORE:
 		case RT_RAIL_RINGS:
+#ifdef USE_VIRTUAL_KEYBOARD
+		case RT_VR_KEYBOARD:
+#endif
+#ifdef USE_LASER_SIGHT
+		case RT_LASERSIGHT:
+#endif
+#ifdef USE_VIRTUAL_MENU
+		case RT_VR_MENU:
+		case RT_VR_MAIN_MENU_FLOOR:
+#endif
 			// self blood sprites, talk balloons, etc should not be drawn in the primary
 			// view.  We can't just do this check for all entities, because md3
 			// entities may still want to cast shadows from them
@@ -1661,7 +1687,7 @@ static void R_AddEntitySurfaces( void ) {
 			}
 			break;
 		default:
-			ri.Error( ERR_DROP, "R_AddEntitySurfaces: Bad reType" );
+			ri.Error( ERR_DROP, "R_AddEntitySurfaces: Bad reType (%i)", ent->e.reType );
 		}
 	}
 
@@ -1688,7 +1714,17 @@ static void R_GenerateDrawSurfs( void ) {
 	R_SetFarClip();
 
 	// we know the size of the clipping volume. Now set the rest of the projection matrix.
+#ifdef USE_MULTIVIEW
+	if ( isMultiview ) {
+		R_SetupProjectionZ( &tr.viewParms, STEREO_LEFT );
+		R_SetupProjectionZ( &tr.viewParms, STEREO_RIGHT );
+	}
+	else {
+        R_SetupProjectionZ( &tr.viewParms, tr.viewParms.stereoFrame );
+	}
+#else
 	R_SetupProjectionZ( &tr.viewParms );
+#endif
 
 	R_AddEntitySurfaces();
 }
@@ -1721,7 +1757,14 @@ void R_RenderView( const viewParms_t *parms ) {
 	// set viewParms.world
 	R_RotateForViewer();
 
-	R_SetupProjection( &tr.viewParms, r_zproj->value, qtrue );
+#ifdef USE_OPENXR
+	if (tr.viewParms.fovX != 90.0f)
+		R_SetupProjection( &tr.viewParms, r_zproj->value, tr.viewParms.zFar, qtrue );
+	else
+		OpenXR_setupProjectionM( &tr.viewParms, r_zproj->value, tr.viewParms.zFar, qtrue );
+#else
+	R_SetupProjection( &tr.viewParms, r_zproj->value, tr.viewParms.zFar, qtrue );
+#endif
 
 	R_GenerateDrawSurfs();
 

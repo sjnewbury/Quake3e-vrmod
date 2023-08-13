@@ -3,6 +3,7 @@
 #include "../renderercommon/vulkan/vulkan.h"
 #include "tr_common.h"
 
+#define VR_FRAME_LAYER_EYE_MAX 2
 #define MAX_SWAPCHAIN_IMAGES 8
 #define MIN_SWAPCHAIN_IMAGES_IMM 3
 #define MIN_SWAPCHAIN_IMAGES_FIFO   3
@@ -25,7 +26,12 @@
 
 #define USE_DEDICATED_ALLOCATION
 //#define MIN_IMAGE_ALIGN (128*1024)
-#define MAX_ATTACHMENTS_IN_POOL (8+VK_NUM_BLOOM_PASSES*2) // depth + msaa + msaa-resolve + depth-resolve + screenmap.msaa + screenmap.resolve + screenmap.depth + bloom_extract + blur pairs
+
+#ifdef USE_OPENXR
+#define MAX_ATTACHMENTS_IN_POOL (2*(6+1+VK_NUM_BLOOM_PASSES*2)) // depth + msaa + msaa-resolve + screenmap.msaa + screenmap.resolve + screenmap.depth + bloom_extract + blur pairs
+#else
+#define MAX_ATTACHMENTS_IN_POOL (6+1+VK_NUM_BLOOM_PASSES*2) // depth + msaa + msaa-resolve + screenmap.msaa + screenmap.resolve + screenmap.depth + bloom_extract + blur pairs
+#endif
 
 typedef enum {
 	TYPE_COLOR_WHITE,
@@ -128,6 +134,9 @@ typedef enum {
 	RENDER_PASS_SCREENMAP = 0,
 	RENDER_PASS_MAIN,
 	RENDER_PASS_POST_BLOOM,
+#ifdef USE_VIRTUAL_MENU
+	RENDER_PASS_MENU,
+#endif
 	RENDER_PASS_COUNT
 } renderPass_t;
 
@@ -143,6 +152,9 @@ typedef struct {
 	int line_width;
 	int abs_light;
 	int allow_discard;
+#ifdef USE_VIRTUAL_MENU
+	qboolean isMenu;
+#endif
 } Vk_Pipeline_Def;
 
 typedef struct VK_Pipeline {
@@ -222,12 +234,20 @@ void vk_end_frame( void );
 void vk_end_render_pass( void );
 void vk_begin_main_render_pass( void );
 
+void vk_begin_screenmap_render_pass( void );
+#ifdef USE_VIRTUAL_MENU
+void vk_begin_menu_render_pass( void );
+#endif
 void vk_bind_pipeline( uint32_t pipeline );
 void vk_bind_index( void );
 void vk_bind_index_ext( const int numIndexes, const uint32_t*indexes );
 void vk_bind_geometry( uint32_t flags );
 void vk_bind_lighting( int stage, int bundle );
 void vk_draw_geometry( Vk_Depth_Range depth_range, qboolean indexed );
+#ifdef USE_SCREENMAP
+qboolean vk_find_screenmap_drawsurfs( void );
+#endif
+void vk_draw_light( uint32_t pipeline, Vk_Depth_Range depth_range, uint32_t uniform_offset, int fog);
 
 void vk_read_pixels( byte* buffer, uint32_t width, uint32_t height ); // screenshots
 qboolean vk_bloom( void );
@@ -285,6 +305,10 @@ typedef struct vk_tess_s {
 	VkRect2D scissor_rect;
 } vk_tess_t;
 
+typedef struct {
+	VkImage image;
+	VkImageView view;
+} FrameBufferAttachment;
 
 // Vk_Instance contains engine-specific vulkan resources that persist entire renderer lifetime.
 // This structure is initialized/deinitialized by vk_initialize/vk_shutdown functions correspondingly.
@@ -296,13 +320,14 @@ typedef struct {
 	VkSurfaceFormatKHR present_format;
 
 	uint32_t queue_family_index;
+	uint32_t queue_index;//queueIndex is a valid queue index on device to be used for synchronization. OPENXR
 	VkDevice device;
 	VkQueue queue;
 
 	VkSwapchainKHR swapchain;
 	uint32_t swapchain_image_count;
 	VkImage swapchain_images[MAX_SWAPCHAIN_IMAGES];
-	VkImageView swapchain_image_views[MAX_SWAPCHAIN_IMAGES];
+	VkImageView swapchain_image_views[VR_FRAME_LAYER_EYE_MAX][MAX_SWAPCHAIN_IMAGES];
 	uint32_t swapchain_image_index;
 
 	VkCommandPool command_pool;
@@ -318,7 +343,13 @@ typedef struct {
 		VkRenderPass bloom_extract;
 		VkRenderPass blur[VK_NUM_BLOOM_PASSES*2]; // horizontal-vertical pairs
 		VkRenderPass post_bloom;
+#ifdef USE_VIRTUAL_MENU
+		VkRenderPass menu;
+#endif
 	} render_pass;
+
+	int eye; // actual eye
+	int	NumEyes; // eyes nb (1 : non-stereo or multiview, 2 : stereo)
 
 	VkDescriptorPool descriptor_pool;
 	VkDescriptorSetLayout set_layout_sampler;	// combined image sampler
@@ -346,8 +377,22 @@ typedef struct {
 	VkImage msaa_image;
 	VkImageView msaa_image_view;
 
+#ifdef USE_VIRTUAL_MENU
 	// screenMap
 	struct {
+		qboolean enable;
+		uint32_t samples;
+		FrameBufferAttachment multiSampleColor;
+		FrameBufferAttachment singleSampleColor;
+		FrameBufferAttachment depth;
+		VkSampler sampler;
+		VkDescriptorSet color_descriptorSet;
+	} virtual_menu;
+#endif
+
+#ifdef USE_SCREENMAP
+	struct {
+		qboolean enable;
 		VkDescriptorSet color_descriptor;
 		VkImage color_image;
 		VkImageView color_image_view;
@@ -359,6 +404,7 @@ typedef struct {
 		VkImageView depth_image_view;
 
 	} screenMap;
+#endif
 
 	struct {
 		VkImage image;
@@ -371,8 +417,11 @@ typedef struct {
 		VkFramebuffer main[MAX_SWAPCHAIN_IMAGES];
 		VkFramebuffer gamma[MAX_SWAPCHAIN_IMAGES];
 		VkFramebuffer screenmap;
+#ifdef USE_VIRTUAL_MENU
+		VkFramebuffer menu;
+#endif
 		VkFramebuffer capture;
-	} framebuffers;
+	} framebuffers[ VR_FRAME_LAYER_EYE_MAX ];
 
 	vk_tess_t tess[ NUM_COMMAND_BUFFERS ], *cmd;
 	int cmd_index;
@@ -491,6 +540,9 @@ typedef struct {
 	uint32_t surface_axis_pipeline;
 	uint32_t dot_pipeline;
 
+#ifdef USE_VIRTUAL_MENU
+	uint32_t virtual_menu_pipeline;
+#endif
 	VkPipeline gamma_pipeline;
 	VkPipeline capture_pipeline;
 	VkPipeline bloom_extract_pipeline;

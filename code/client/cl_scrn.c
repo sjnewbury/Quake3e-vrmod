@@ -22,6 +22,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // cl_scrn.c -- master for refresh, status bar, console, chat, notify, etc
 
 #include "client.h"
+#ifdef USE_VIRTUAL_MENU
+#include "../vrmod/VRMOD_VMainMenu.h" // for CL_create_menu_scene()
+#endif
 
 static qboolean	scr_initialized;		// ready to draw
 
@@ -31,6 +34,8 @@ static cvar_t		*cl_graphheight;
 static cvar_t		*cl_graphscale;
 static cvar_t		*cl_graphshift;
 
+static cvar_t		*in_anaglyphMode;
+//static cvar_t		*r_stereoEnabled;
 /*
 ================
 SCR_DrawNamedPic
@@ -496,6 +501,12 @@ void SCR_Init( void ) {
 	cl_graphscale = Cvar_Get ("graphscale", "1", CVAR_CHEAT);
 	cl_graphshift = Cvar_Get ("graphshift", "0", CVAR_CHEAT);
 
+	in_anaglyphMode = Cvar_Get("r_anaglyphMode", "0", CVAR_CHEAT);
+/*#ifdef USE_VR
+	r_stereoEnabled = Cvar_Get("r_stereoEnabled", "1", CVAR_CHEAT);
+#else
+	r_stereoEnabled = Cvar_Get("r_stereoEnabled", "0", CVAR_CHEAT);
+#endif*/
 	scr_initialized = qtrue;
 }
 
@@ -519,7 +530,134 @@ SCR_DrawScreenField
 This will be called twice if rendering in stereo mode
 ==================
 */
+static void SCR_DrawScreenField_virtualMenu( stereoFrame_t stereoFrame ) {
+	qboolean inGameMenu 	= ( uivm && Key_GetCatcher( ) & KEYCATCH_UI);
+	qboolean uiFullscreen 	= ( uivm && VM_Call( uivm, 0, UI_IS_FULLSCREEN ) );
+
+	//ALOGE("SCR_DrawScreenField_vrmod() stereoFrame: %i, cls.state: %i, inGameMenu: %s, uiFullscreen: %s, needMenuBuffer: %s", stereoFrame, cls.state, (inGameMenu) ? "True" : "False", (uiFullscreen) ? "True" : "False", (needMenuBuffer) ? "True" : "False");
+	if(cls.state == CA_CONNECTING) {
+		// fixme: this state is rendered on one eye, so it's best to ignore it for now.
+		return;
+	}
+
+	re.BeginFrame( stereoFrame );
+
+#ifdef USE_VIRTUAL_MENU
+	qboolean needMenuBuffer = ( cls.state != CA_ACTIVE || inGameMenu );
+
+	if ( needMenuBuffer )
+		re.BeginMenuTexture( stereoFrame ); // add command RC_DRAW_MENU_START, then it will be catch in tr_backend/RB_DRAW_MENU_START()
+#endif
+
+	// wide aspect ratio screens need to have the sides cleared
+	// unless they are displaying game renderings
+	if ( uiFullscreen || cls.state < CA_LOADING ) {
+		if ( cls.glconfig.vidWidth * 480 > cls.glconfig.vidHeight * 640 ) {
+			re.SetColor( g_color_table[ ColorIndex( COLOR_BLACK ) ] );
+			re.DrawStretchPic( 0, 0, cls.glconfig.vidWidth, cls.glconfig.vidHeight, 0, 0, 0, 0, cls.whiteShader );
+			re.SetColor( NULL );
+		}
+	}
+
+	//===============================
+	//		menu render pass
+	//===============================
+	// if the menu is going to cover the entire screen, we
+	// don't need to render anything under it
+	if ( uivm && !uiFullscreen ) {
+		switch( cls.state ) {
+			default:
+				Com_Error( ERR_FATAL, "SCR_DrawScreenField: bad cls.state" );
+				break;
+			case CA_CINEMATIC:
+				SCR_DrawCinematic();
+				break;
+			case CA_DISCONNECTED:
+				// force menu up
+				S_StopAllSounds();
+				VM_Call( uivm, 1, UI_SET_ACTIVE_MENU, UIMENU_MAIN );
+				break;
+			case CA_CONNECTING:
+			case CA_CHALLENGING:
+			case CA_CONNECTED:
+				// connecting clients will only show the connection dialog
+				// refresh to update the time
+				VM_Call( uivm, 1, UI_REFRESH, cls.realtime );
+				VM_Call( uivm, 1, UI_DRAW_CONNECT_SCREEN, qfalse );
+				break;
+			case CA_LOADING:
+			case CA_PRIMED:
+				// draw the game information screen and loading progress
+				if ( cgvm ) {
+					CL_CGameRendering( stereoFrame );
+				}
+				// also draw the connection information, so it doesn't
+				// flash away too briefly on local or lan games
+				// refresh to update the time
+				VM_Call( uivm, 1, UI_REFRESH, cls.realtime );
+				VM_Call( uivm, 1, UI_DRAW_CONNECT_SCREEN, qtrue );
+				break;
+			case CA_ACTIVE:
+#ifndef USE_VIRTUAL_MENU
+			// always supply STEREO_CENTER as vieworg offset is now done by the engine.
+			CL_CGameRendering( stereoFrame );
+			SCR_DrawDemoRecording();
+#endif
+#ifdef USE_VOIP
+			//SCR_DrawVoipMeter();//TODO
+#endif
+			break;
+		}
+	}
+
+	// menu draws next
+	if ( inGameMenu ) {
+		VM_Call( uivm, 1, UI_REFRESH, cls.realtime );
+	}
+
+	// console draws next
+	Con_DrawConsole();
+
+#ifdef USE_VIRTUAL_MENU
+	//===============================
+	//		game render pass
+	//===============================
+	if ( needMenuBuffer )
+		re.EndMenuTexture(); // add command RC_DRAW_MENU_END, who will be catch by tr_backend/RB_DRAW_MENU_END()
+
+	if ( cls.state == CA_ACTIVE ) {
+		// always supply STEREO_CENTER as vieworg offset is now done by the engine.
+		CL_CGameRendering( stereoFrame );
+		SCR_DrawDemoRecording();
+		// draw notify lines
+		Con_DrawNotify();
+
+#ifdef USE_VOIP
+		SCR_DrawVoipMeter();
+#endif
+	} else  {
+		// create the VR main menu scene (player, floor and virtual menu)
+		CL_create_menu_scene();
+	}
+#endif
+
+	// debug graph can be drawn on top of anything
+	if ( cl_debuggraph->integer || cl_timegraph->integer || cl_debugMove->integer ) {
+		SCR_DrawDebugGraph ();
+	}
+}
+
+/*
+==================
+SCR_DrawScreenField
+
+This will be called twice if rendering in stereo mode
+==================
+*/
 static void SCR_DrawScreenField( stereoFrame_t stereoFrame ) {
+#ifdef USE_VIRTUAL_MENU
+	SCR_DrawScreenField_virtualMenu( stereoFrame );
+#else
 	qboolean uiFullscreen;
 
 	re.BeginFrame( stereoFrame );
@@ -594,6 +732,13 @@ static void SCR_DrawScreenField( stereoFrame_t stereoFrame ) {
 	if ( cl_debuggraph->integer || cl_timegraph->integer || cl_debugMove->integer ) {
 		SCR_DrawDebugGraph ();
 	}
+#endif
+#ifdef USE_OPENXR
+	if (com_speeds->integer)
+		re.EndFrame(&time_frontend, &time_backend);
+	else
+		re.EndFrame(NULL, NULL);
+#endif
 }
 
 
@@ -632,23 +777,24 @@ void SCR_UpdateScreen( void ) {
 
 	// If there is no VM, there are also no rendering commands issued. Stop the renderer in
 	// that case.
-	if ( uivm )
-	{
-		// XXX
-		int in_anaglyphMode = Cvar_VariableIntegerValue("r_anaglyphMode");
+	if ( uivm ) {
 		// if running in stereo, we need to draw the frame twice
-		if ( cls.glconfig.stereoEnabled || in_anaglyphMode) {
+		if ( cls.glconfig.stereoEnabled || in_anaglyphMode ){//*/ r_stereoEnabled ) {
 			SCR_DrawScreenField( STEREO_LEFT );
 			SCR_DrawScreenField( STEREO_RIGHT );
 		} else {
 			SCR_DrawScreenField( STEREO_CENTER );
 		}
 
+//#ifndef USE_OPENXR
+#ifndef USE_VIRTUAL_MENU
 		if ( com_speeds->integer ) {
 			re.EndFrame( &time_frontend, &time_backend );
 		} else {
 			re.EndFrame( NULL, NULL );
 		}
+#endif
+
 	}
 
 	recursive = 0;

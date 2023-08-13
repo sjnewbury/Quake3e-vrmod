@@ -66,6 +66,9 @@ cvar_t	*r_presentBits;
 static cvar_t *r_ignorehwgamma;
 
 cvar_t	*r_fastsky;
+#ifdef USE_DEATHCAM
+cvar_t	*vr_thirdPersonSpectator;
+#endif
 cvar_t	*r_neatsky;
 cvar_t	*r_drawSun;
 cvar_t	*r_dynamiclight;
@@ -538,7 +541,7 @@ static void InitOpenGL( void )
 
 		ri.CL_SetScaling( 1.0, glConfig.vidWidth, glConfig.vidHeight );
 
-		if ( r_fbo->integer )
+		if ( r_fbo->integer || vk.msaaActive )
 		{
 			if ( r_renderScale->integer )
 			{
@@ -590,7 +593,7 @@ static void InitOpenGL( void )
 	}
 
 #ifdef USE_VULKAN
-	if ( !vk.active ) {
+	if ( !vk.active && vk.instance ) {
 		// might happen after REF_KEEP_WINDOW
 		vk_initialize();
 		gls.initTime = ri.Milliseconds();
@@ -601,6 +604,8 @@ static void InitOpenGL( void )
 		ri.Error( ERR_FATAL, "Recursive error during Vulkan initialization" );
 	}
 #endif
+
+	VarInfo();
 
 	// set default state
 	GL_SetDefaultState();
@@ -1569,10 +1574,16 @@ static void R_Register( void )
 	ri.Cvar_SetDescription( r_zproj, "Projected viewport frustum." );
 	r_stereoSeparation = ri.Cvar_Get( "r_stereoSeparation", "64", CVAR_ARCHIVE_ND );
 	ri.Cvar_SetDescription( r_stereoSeparation, "Control eye separation. Resulting separation is \\r_zproj divided by this value in standard units." );
+#ifdef USE_MULTIVIEW
+	r_multiview = ri.Cvar_Get( "r_multiview", "0", CVAR_ARCHIVE );
+#endif
 	r_ignoreGLErrors = ri.Cvar_Get( "r_ignoreGLErrors", "1", CVAR_ARCHIVE_ND );
 	ri.Cvar_SetDescription( r_ignoreGLErrors, "Ignore OpenGL errors." );
 	r_fastsky = ri.Cvar_Get( "r_fastsky", "0", CVAR_ARCHIVE_ND );
 	ri.Cvar_SetDescription( r_fastsky, "Draw flat colored skies." );
+#ifdef USE_DEATHCAM
+	vr_thirdPersonSpectator = ri.Cvar_Get("vr_thirdPersonSpectator", "0", CVAR_TEMP);
+#endif
 	r_drawSun = ri.Cvar_Get( "r_drawSun", "0", CVAR_ARCHIVE_ND );
 	ri.Cvar_SetDescription( r_drawSun, "Draw sun shader in skies." );
 	r_dynamiclight = ri.Cvar_Get( "r_dynamiclight", "1", CVAR_ARCHIVE );
@@ -1824,8 +1835,17 @@ void R_Init( void ) {
 	Com_Memset( &tess, 0, sizeof( tess ) );
 	Com_Memset( &glState, 0, sizeof( glState ) );
 
-	if (sizeof(glconfig_t) != 11332)
-		ri.Error( ERR_FATAL, "Mod ABI incompatible: sizeof(glconfig_t) == %u != 11332", (unsigned int) sizeof(glconfig_t));
+	int glconfig_t_Size = 11332;
+#ifdef USE_VIRTUAL_MENU
+	glconfig_t_Size += 2 * sizeof(int);// add menuWidth and menuHeight size
+#endif
+
+#ifdef USE_NEOHUD
+	glconfig_t_Size += 2 * sizeof(int);// add hudWidth and hudHeight size
+#endif
+
+	if ( sizeof(glconfig_t) != glconfig_t_Size )
+		ri.Error( ERR_FATAL, "Mod ABI incompatible: sizeof(glconfig_t) == %u != 11332", (unsigned int) sizeof(glconfig_t) );
 
 	if ( (intptr_t)tess.xyz & 15 ) {
 		ri.Printf( PRINT_WARNING, "tess.xyz not 16 byte aligned\n" );
@@ -1884,8 +1904,6 @@ void R_Init( void ) {
 	InitOpenGL();
 
 	R_InitImages();
-
-	VarInfo();
 
 #ifdef USE_VULKAN
 	vk_create_pipelines();
@@ -2040,6 +2058,13 @@ refexport_t *GetRefAPI ( int apiVersion, refimport_t *rimp ) {
 	re.BeginFrame = RE_BeginFrame;
 	re.EndFrame = RE_EndFrame;
 
+#ifdef USE_VIRTUAL_MENU
+	re.BeginMenuTexture = RE_BeginMenuTexture;
+	re.EndMenuTexture = RE_EndMenuTexture;
+#endif
+#ifdef USE_NEOHUD
+	re.RenderHUD = RE_RenderHUD;
+#endif
 	re.MarkFragments = R_MarkFragments;
 	re.LerpTag = R_LerpTag;
 	re.ModelBounds = R_ModelBounds;

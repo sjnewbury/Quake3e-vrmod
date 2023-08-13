@@ -24,6 +24,10 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "../botlib/botlib.h"
 
+#ifdef USE_VR
+#include "../vrmod/VRMOD_input.h"
+#endif
+
 extern	botlib_export_t	*botlib_export;
 
 vm_t *uivm = NULL;
@@ -1264,12 +1268,22 @@ void CL_InitUI( void ) {
 		}
 	}
 
+#ifdef USE_NATIVE_HACK
+	long val = (long)(&vr_info);
+	unsigned int ptr[sizeof(long) / sizeof(unsigned int)];
+	memcpy(ptr, &val, sizeof(long));
+#endif
+
 	// sanity check
 	v = VM_Call( uivm, 0, UI_GETAPIVERSION );
 	if (v == UI_OLD_API_VERSION) {
 //		Com_Printf(S_COLOR_YELLOW "WARNING: loading old Quake III Arena User Interface version %d\n", v );
 		// init for this gamestate
+#ifdef USE_NATIVE_HACK
+		VM_Call( uivm, 3, UI_INIT, (cls.state >= CA_AUTHORIZING && cls.state < CA_ACTIVE), ptr[0], ptr[1] );
+#else
 		VM_Call( uivm, 1, UI_INIT, (cls.state >= CA_AUTHORIZING && cls.state < CA_ACTIVE) );
+#endif
 	}
 	else if (v != UI_API_VERSION) {
 		// Free uivm now, so UI_SHUTDOWN doesn't get called later.
@@ -1281,7 +1295,11 @@ void CL_InitUI( void ) {
 	}
 	else {
 		// init for this gamestate
+#ifdef USE_NATIVE_HACK
+		VM_Call( uivm, 3, UI_INIT, (cls.state >= CA_AUTHORIZING && cls.state < CA_ACTIVE), ptr[0], ptr[1] );
+#else
 		VM_Call( uivm, 1, UI_INIT, (cls.state >= CA_AUTHORIZING && cls.state < CA_ACTIVE) );
+#endif
 	}
 }
 

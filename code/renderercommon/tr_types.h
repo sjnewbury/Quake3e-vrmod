@@ -74,7 +74,16 @@ typedef enum {
 	RT_RAIL_RINGS,
 	RT_LIGHTNING,
 	RT_PORTALSURFACE,		// doesn't draw anything, just info for portals
-
+#ifdef USE_VIRTUAL_MENU
+	RT_VR_MAIN_MENU_FLOOR,
+	RT_VR_MENU,
+#endif
+#ifdef USE_VIRTUAL_KEYBOARD
+	RT_VR_KEYBOARD,
+#endif
+#if defined USE_LASER_SIGHT || defined USE_GRAPPLING_HOOK
+	RT_LASERSIGHT,
+#endif
 	RT_MAX_REF_ENTITY_TYPE
 } refEntityType_t;
 
@@ -197,6 +206,14 @@ typedef struct {
 	qboolean				textureEnvAddAvailable;
 
 	int						vidWidth, vidHeight;
+
+#ifdef USE_VIRTUAL_MENU
+	int						menuWidth, menuHeight;
+#endif
+
+#ifdef USE_NEOHUD
+	int						hudWidth, hudHeight;
+#endif
 	// aspect is the screen's physical width / height, which may be different
 	// than scrWidth / scrHeight if the pixels are non-square
 	// normal screens should be 4/3, but wide aspect monitors may be 16/9

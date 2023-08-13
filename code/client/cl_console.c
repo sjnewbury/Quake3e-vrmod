@@ -656,7 +656,10 @@ Con_DrawNotify
 Draws the last few lines of output transparently over the game top
 ================
 */
-static void Con_DrawNotify( void )
+#ifndef USE_VIRTUAL_MENU
+static
+#endif
+void Con_DrawNotify( void )
 {
 	int		x, v;
 	short	*text;
@@ -899,6 +902,12 @@ void Con_DrawConsole( void ) {
 		}
 	}
 
+#ifdef USE_VIRTUAL_MENU
+	if ( con.displayFrac ) {
+		// fullscreen and no animation when rendering in virtual menu
+		Con_DrawSolidConsole( 1.0 );
+	}
+#else
 	if ( con.displayFrac ) {
 		Con_DrawSolidConsole( con.displayFrac );
 	} else {
@@ -907,6 +916,7 @@ void Con_DrawConsole( void ) {
 			Con_DrawNotify();
 		}
 	}
+#endif
 }
 
 //================================================================
@@ -922,6 +932,9 @@ void Con_RunConsole( void )
 {
 	// decide on the destination height of the console
 	if ( Key_GetCatcher( ) & KEYCATCH_CONSOLE )
+#ifdef USE_VIRTUAL_MENU
+		con.finalFrac = 1.0;	// fullscreen (needed for offscreen rendering)
+#endif
 		con.finalFrac = 0.5;	// half screen
 	else
 		con.finalFrac = 0.0;	// none visible
